@@ -36,6 +36,11 @@
         {% if r.keywords %}
         <span class="badge badge-gray">{{ r.keywords|length }} навыков</span>
         {% endif %}
+        {% if r.version_count %}
+        <a href="/resumes/{{ r.id }}/versions" class="badge badge-gray" style="text-decoration:none;">
+          v{{ r.active_version or r.version_count }} · история ({{ r.version_count }})
+        </a>
+        {% endif %}
       </div>
       <div style="display:flex; gap:6px; flex-shrink:0;">
         <form method="post" action="/resumes/{{ r.id }}/activate" style="margin:0;">

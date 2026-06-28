@@ -38,6 +38,7 @@ async def settings_page(request: Request):
             "cover_letter_backend": view.cover_letter_backend,
             "anthropic_api_key": view.anthropic_api_key,
             "anthropic_model": view.anthropic_model,
+            "candidate_name": view.candidate_name,
             # Расписание
             "interval": view.interval,
             # Flash
@@ -66,6 +67,7 @@ async def settings_save(
     cover_letter_backend: str = Form("ollama"),
     anthropic_api_key: str = Form(""),
     anthropic_model: str = Form(""),
+    candidate_name: str = Form(""),
     # Расписание
     interval: int = Form(2),
 ):
@@ -84,6 +86,7 @@ async def settings_save(
         "cover_letter_backend": cover_letter_backend,
         "anthropic_api_key": anthropic_api_key,
         "anthropic_model": anthropic_model,
+        "candidate_name": candidate_name,
         "interval": interval,
     })
     try:

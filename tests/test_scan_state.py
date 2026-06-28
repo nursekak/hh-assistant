@@ -30,6 +30,7 @@ async def scan_db(monkeypatch):
 
     os.close(fd)
 
+    monkeypatch.setattr(storage, "DB_PATH", path)
     monkeypatch.setattr(config, "DB_PATH", path)
 
     await storage.init_db()

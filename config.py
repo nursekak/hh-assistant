@@ -40,5 +40,7 @@ EXPERIENCE_TOLERANCE_YEARS = float(os.getenv("EXPERIENCE_TOLERANCE_YEARS", "0.5"
 
 # Сопроводительное письмо: ollama | claude
 COVER_LETTER_BACKEND = os.getenv("COVER_LETTER_BACKEND", "ollama").lower()
+# Имя кандидата для подписи в сопроводительном письме.
+CANDIDATE_NAME       = os.getenv("CANDIDATE_NAME", "")
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL      = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")

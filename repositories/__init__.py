@@ -7,6 +7,7 @@
 
 from repositories.analytics import AnalyticsRepository
 from repositories.resume import ResumeRepository
+from repositories.resume_version import ResumeVersionRepository
 from repositories.scan_job import ScanJobRepository
 from repositories.settings import SettingsRepository
 from repositories.vacancy import VacancyRepository
@@ -14,6 +15,7 @@ from repositories.vacancy import VacancyRepository
 __all__ = [
     "AnalyticsRepository",
     "ResumeRepository",
+    "ResumeVersionRepository",
     "ScanJobRepository",
     "SettingsRepository",
     "VacancyRepository",

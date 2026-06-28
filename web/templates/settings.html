@@ -199,6 +199,12 @@
       </div>
 
       <div class="field">
+        <label>Имя кандидата (для подписи в письме)</label>
+        <input type="text" name="candidate_name" value="{{ candidate_name }}" class="input" placeholder="Например: Глеб">
+        <div class="field-hint">Подставляется в подпись «С уважением, …». Оставьте пустым, чтобы письмо было без подписи.</div>
+      </div>
+
+      <div class="field">
         <label>Генерировать письма через</label>
         <div style="display:flex; gap:10px; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:8px; padding:10px 16px; border:1.5px solid; border-radius:10px; cursor:pointer; flex:1; transition:all 0.15s;"
