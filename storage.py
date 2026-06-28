@@ -63,6 +63,31 @@ async def init_db() -> None:
         ]:
             await _ensure_column(db, "vacancies", col, defn)
         await _ensure_column(db, "resumes", "profile_json", "TEXT DEFAULT ''")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scan_jobs (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                query           TEXT NOT NULL,
+                phase           TEXT DEFAULT 'search',
+                phase_label     TEXT DEFAULT '',
+                status          TEXT DEFAULT 'running',
+                started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                finished_at     TIMESTAMP,
+                total           INTEGER DEFAULT 0,
+                processed       INTEGER DEFAULT 0,
+                new_count       INTEGER DEFAULT 0,
+                skipped_count   INTEGER DEFAULT 0,
+                current_title   TEXT DEFAULT '',
+                current_company TEXT DEFAULT '',
+                error           TEXT DEFAULT '',
+                logs            TEXT DEFAULT '[]'
+            )
+        """)
+        for col, defn in [
+            ("job_type", "TEXT DEFAULT 'scan'"),
+            ("attempts", "INTEGER DEFAULT 0"),
+            ("worker_id", "TEXT DEFAULT ''"),
+        ]:
+            await _ensure_column(db, "scan_jobs", col, defn)
         await db.commit()
 
 
@@ -436,3 +461,152 @@ async def get_applied_count_since(days: int) -> int:
             (since,),
         )
         return (await cur.fetchone())[0]
+
+
+SCAN_LOG_MAX = 40
+
+
+def _scan_job_row_to_dict(row: tuple) -> dict:
+    return {
+        "id": row[0],
+        "query": row[1],
+        "phase": row[2],
+        "phase_label": row[3],
+        "status": row[4],
+        "started_at": row[5],
+        "finished_at": row[6],
+        "total": row[7],
+        "processed": row[8],
+        "new_count": row[9],
+        "skipped_count": row[10],
+        "current_title": row[11],
+        "current_company": row[12],
+        "error": row[13],
+        "logs": json.loads(row[14] or "[]"),
+    }
+
+
+_SCAN_JOB_SELECT = """
+    SELECT id, query, phase, phase_label, status, started_at, finished_at,
+           total, processed, new_count, skipped_count,
+           current_title, current_company, error, logs
+    FROM scan_jobs
+"""
+
+
+async def is_scan_running() -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT 1 FROM scan_jobs WHERE status = 'running' LIMIT 1"
+        )
+        return await cur.fetchone() is not None
+
+
+async def get_running_scan_job() -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            _SCAN_JOB_SELECT + " WHERE status = 'running' ORDER BY id DESC LIMIT 1"
+        )
+        row = await cur.fetchone()
+    return _scan_job_row_to_dict(row) if row else None
+
+
+async def get_latest_scan_job() -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            _SCAN_JOB_SELECT + " ORDER BY id DESC LIMIT 1"
+        )
+        row = await cur.fetchone()
+    return _scan_job_row_to_dict(row) if row else None
+
+
+async def create_scan_job(query: str, job_type: str = "scan") -> int:
+    import time
+
+    started_msg = f"Задача в очереди: «{query}»"
+    logs = json.dumps(
+        [{"t": time.strftime("%H:%M:%S"), "msg": started_msg}],
+        ensure_ascii=False,
+    )
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT 1 FROM scan_jobs WHERE status = 'running' LIMIT 1"
+        )
+        if await cur.fetchone():
+            raise RuntimeError("scan_already_running")
+        cur = await db.execute(
+            """INSERT INTO scan_jobs
+               (query, phase, phase_label, status, job_type, logs)
+               VALUES (?, 'queued', 'В очереди', 'running', ?, ?)""",
+            (query, job_type, logs),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def update_scan_job(job_id: int, **fields: Any) -> None:
+    allowed = {
+        "phase", "phase_label", "status", "total", "processed",
+        "new_count", "skipped_count", "current_title", "current_company", "error",
+        "job_type", "attempts", "worker_id",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    cols = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [job_id]
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"UPDATE scan_jobs SET {cols} WHERE id = ?", values)
+        await db.commit()
+
+
+async def append_scan_log(job_id: int, message: str) -> None:
+    import time
+
+    entry = {"t": time.strftime("%H:%M:%S"), "msg": message}
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT logs FROM scan_jobs WHERE id = ?", (job_id,))
+        row = await cur.fetchone()
+        if not row:
+            return
+        logs = json.loads(row[0] or "[]")
+        logs.append(entry)
+        if len(logs) > SCAN_LOG_MAX:
+            logs = logs[-SCAN_LOG_MAX:]
+        await db.execute(
+            "UPDATE scan_jobs SET logs = ? WHERE id = ?",
+            (json.dumps(logs, ensure_ascii=False), job_id),
+        )
+        await db.commit()
+
+
+async def finish_scan_job(job_id: int, phase: str, label: str) -> None:
+    status = "error" if phase == "error" else "done"
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE scan_jobs
+               SET status = ?, phase = ?, phase_label = ?,
+                   finished_at = CURRENT_TIMESTAMP,
+                   current_title = '', current_company = ''
+               WHERE id = ?""",
+            (status, phase, label, job_id),
+        )
+        await db.commit()
+
+
+async def reset_orphaned_scan_jobs(reason: str = "Прервано рестартом") -> int:
+    """Помечает «зависшие» running-задачи как error.
+
+    Вызывается при старте процессов: после краха воркера/бота running-строка
+    осталась бы навсегда и блокировала новые сканы (is_scan_running == True).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """UPDATE scan_jobs
+               SET status = 'error', phase = 'error', phase_label = ?,
+                   error = ?, finished_at = CURRENT_TIMESTAMP
+               WHERE status = 'running'""",
+            (reason, reason),
+        )
+        await db.commit()
+        return cur.rowcount

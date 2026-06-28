@@ -56,7 +56,11 @@ _STEALTH_SCRIPT = (
 # Сериализует доступ к браузеру и файлу сессии: бот однопользовательский,
 # но скан / проверка ответов / отклик / парсинг резюме могут пересечься во
 # времени и одновременно писать SESSION_FILE → порча сессии. Лок это исключает.
-BROWSER_LOCK = asyncio.Lock()
+# Гибридный: внутри процесса — asyncio.Lock, между процессами (бот ↔ воркер) —
+# распределённый Redis-лок, если задан REDIS_URL.
+from distributed_lock import HybridLock
+
+BROWSER_LOCK = HybridLock("hh:browser")
 
 
 def _context_kwargs(use_session: bool = True) -> dict:
