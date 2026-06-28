@@ -10,7 +10,10 @@ OLLAMA_URL            = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL          = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 DB_PATH               = os.getenv("DB_PATH", "hh_bot.db")
 SCAN_INTERVAL_HOURS   = int(os.getenv("SCAN_INTERVAL_HOURS", "2"))
-MAX_VACANCIES         = int(os.getenv("MAX_VACANCIES_PER_SCAN", "15"))
+MAX_VACANCIES         = int(os.getenv("MAX_VACANCIES_PER_SCAN", "50"))
+# Сколько страниц поиска HH максимум листать за скан (защита от бесконечного
+# листания, когда почти все вакансии уже виденные). 1 страница = 50 карточек.
+SCAN_MAX_PAGES        = int(os.getenv("SCAN_MAX_PAGES", "20"))
 DEFAULT_QUERY         = os.getenv("DEFAULT_SEARCH_QUERY", "Python разработчик")
 SESSION_FILE          = os.getenv("SESSION_FILE", "hh_session.json")
 
@@ -23,6 +26,10 @@ BROWSER_LOCK_TTL_SEC  = int(os.getenv("BROWSER_LOCK_TTL_SEC", "900"))
 WEB_HOST             = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT             = int(os.getenv("WEB_PORT", "8080"))
 MIN_MATCH_THRESHOLD  = float(os.getenv("MIN_MATCH_THRESHOLD", "0.65"))
+# Отправлять ли в Telegram вакансии с совпадением ниже порога.
+# true  — отправлять с предупреждением и кнопкой «Откликнуться всё равно» (по умолчанию);
+# false — сохранять в БД (статус below_threshold), но не слать в Telegram.
+NOTIFY_BELOW_THRESHOLD = os.getenv("NOTIFY_BELOW_THRESHOLD", "true").lower() in ("1", "true", "yes", "on")
 HH_REGION            = os.getenv("HH_REGION", "1")
 HH_SEARCH_PERIOD     = int(os.getenv("HH_SEARCH_PERIOD", "1"))
 USE_LLM_FOR_KEYWORDS = os.getenv("USE_LLM_FOR_KEYWORDS", "true").lower() == "true"

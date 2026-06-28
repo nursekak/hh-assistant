@@ -32,10 +32,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
+    BotCommand,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -198,14 +201,56 @@ def only_owner(func):
     return wrapper
 
 
+# ─────────────────────────── Меню / кнопки ─────────────────────────────────
+
+# Подписи кнопок reply-клавиатуры. Каждая дублирует команду — обработчики ниже
+# слушают и /команду, и текст кнопки (через стек декораторов @router.message).
+BTN_SCAN      = "🔍 Сканировать"
+BTN_STATUS    = "📊 Статистика"
+BTN_RESUMES   = "📄 Резюме"
+BTN_THRESHOLD = "🎯 Порог"
+BTN_SEARCH    = "🔎 Запрос"
+BTN_IMPORT    = "🔐 Вход"
+BTN_HELP      = "ℹ️ Меню"
+
+# Список команд для нативного меню Telegram (кнопка «Menu» / «/»).
+BOT_COMMANDS = [
+    BotCommand(command="scan",      description="🔍 Сканировать вакансии сейчас"),
+    BotCommand(command="status",    description="📊 Статистика"),
+    BotCommand(command="resumes",   description="📄 Выбрать резюме"),
+    BotCommand(command="threshold", description="🎯 Порог совпадения"),
+    BotCommand(command="search",    description="🔎 Поисковый запрос"),
+    BotCommand(command="import",    description="🔐 Вход через cookies"),
+    BotCommand(command="login",     description="📱 Вход по SMS"),
+    BotCommand(command="menu",      description="ℹ️ Показать меню"),
+]
+
+
+def main_menu_kb() -> ReplyKeyboardMarkup:
+    """Постоянная reply-клавиатура с основными действиями."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_SCAN), KeyboardButton(text=BTN_STATUS)],
+            [KeyboardButton(text=BTN_RESUMES), KeyboardButton(text=BTN_THRESHOLD)],
+            [KeyboardButton(text=BTN_SEARCH), KeyboardButton(text=BTN_IMPORT)],
+            [KeyboardButton(text=BTN_HELP)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выбери действие или введи команду…",
+    )
+
+
 # ─────────────────────────────── Handlers ──────────────────────────────────
 
 @router.message(Command("start"))
+@router.message(Command("menu"))
+@router.message(F.text == BTN_HELP)
 @only_owner
 async def cmd_start(msg: Message) -> None:
     await msg.answer(
         "👋 <b>HH.ru бот запущен</b>\n\n"
-        "Команды:\n"
+        "Жми кнопки внизу или используй команды:\n"
         "/import — войти на HH.ru через cookies (рекомендуется)\n"
         "/login — войти по SMS (часто ловит капчу)\n"
         "/search <i>запрос</i> — задать поиск (напр. <code>/search Python Backend</code>)\n"
@@ -215,6 +260,7 @@ async def cmd_start(msg: Message) -> None:
         "/threshold — порог совпадения (match %)\n\n"
         f"⏱ Автосканирование каждые {config.SCAN_INTERVAL_HOURS} ч.",
         parse_mode="HTML",
+        reply_markup=main_menu_kb(),
     )
 
 
@@ -332,6 +378,7 @@ _IMPORT_INSTRUCTIONS = (
 
 
 @router.message(Command("import"))
+@router.message(F.text == BTN_IMPORT)
 @only_owner
 async def cmd_import(msg: Message) -> None:
     cookies_path = Path(config.SESSION_FILE).parent / "hh_cookies.json"
@@ -393,6 +440,7 @@ async def _report_import_result(msg: Message, ok: bool) -> None:
 # ──────── Поиск ────────
 
 @router.message(Command("search"))
+@router.message(F.text == BTN_SEARCH)
 @only_owner
 async def cmd_search(msg: Message) -> None:
     parts = (msg.text or "").split(maxsplit=1)
@@ -412,6 +460,7 @@ async def cmd_search(msg: Message) -> None:
 # ──────── Статистика ────────
 
 @router.message(Command("status"))
+@router.message(F.text == BTN_STATUS)
 @only_owner
 async def cmd_status(msg: Message) -> None:
     ctx = await dashboard_service.get_bot_status()
@@ -442,6 +491,7 @@ async def cmd_status(msg: Message) -> None:
 # ──────── Резюме ────────
 
 @router.message(Command("resumes"))
+@router.message(F.text == BTN_RESUMES)
 @only_owner
 async def cmd_resumes(msg: Message) -> None:
     await _send_resumes_list(msg)
@@ -525,6 +575,7 @@ async def cb_resume_select(cq: CallbackQuery) -> None:
 # ──────── Порог совпадения ────────
 
 @router.message(Command("threshold"))
+@router.message(F.text == BTN_THRESHOLD)
 @only_owner
 async def cmd_threshold(msg: Message) -> None:
     parts = (msg.text or "").split(maxsplit=1)
@@ -549,6 +600,7 @@ async def cmd_threshold(msg: Message) -> None:
 # ──────── Ручной скан ────────
 
 @router.message(Command("scan"))
+@router.message(F.text == BTN_SCAN)
 @only_owner
 async def cmd_scan(msg: Message) -> None:
     if await dashboard_service.is_scan_running():
@@ -767,6 +819,7 @@ async def main() -> None:
     log.info("Бот и веб-интерфейс запущены (http://%s:%d).", config.WEB_HOST, config.WEB_PORT)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_my_commands(BOT_COMMANDS)
         await asyncio.gather(
             server.serve(),
             dp.start_polling(bot),
