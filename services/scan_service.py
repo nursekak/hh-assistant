@@ -157,6 +157,7 @@ class ScanService:
         exp_skipped = 0
         processed = 0
         threshold = await self.settings_repo.get_match_threshold(config.MIN_MATCH_THRESHOLD)
+        notify_below = await self._notify_below_threshold_enabled()
 
         exp_filter_on = await self._experience_filter_enabled()
         exp_tolerance = await self._experience_tolerance()
@@ -227,6 +228,21 @@ class ScanService:
                 if match_result.verdict == "SKIP":
                     below_threshold += 1
                     await self.scan_job_repo.update(job_id, skipped_count=below_threshold)
+                    resume_id = active_resume["id"] if active_resume else ""
+
+                    # Порог отправки в Telegram: при выключенной опции вакансию
+                    # ниже порога сохраняем в БД, но карточку в Telegram не шлём.
+                    if not notify_below:
+                        await self.scan_job_repo.log(
+                            job_id,
+                            f"🚫 {match_result.score_pct}% — ниже порога, без Telegram: {vacancy.title}",
+                        )
+                        await self._save_and_notify(
+                            vacancy, match_result, query, vac_profile, model, resume_id,
+                            notify=False,
+                        )
+                        continue
+
                     await self.scan_job_repo.log(
                         job_id,
                         f"⚠️ {match_result.score_pct}% — ниже порога: {vacancy.title}",
@@ -260,6 +276,8 @@ class ScanService:
 
         if new_count == 0 and self.notifier:
             msg = "😴 Новых вакансий не найдено."
+            if below_threshold and not notify_below:
+                msg += f"\n🚫 Ниже порога (не отправлены, см. веб): {below_threshold}"
             if exp_skipped:
                 msg += f"\n⏭ Отсеяно по требуемому опыту: {exp_skipped}"
             await self.notifier.notify(msg)
@@ -301,17 +319,22 @@ class ScanService:
         vac_profile: VacancyProfile,
         model: str,
         resume_id: str,
+        notify: bool = True,
     ) -> None:
         san = sanitizer.sanitize(vacancy.full_text)
         text_for_llm = san.text if san.text else vacancy.title
 
-        summary = await llm.analyze_vacancy(
-            title=vacancy.title,
-            company=vacancy.company,
-            salary=vacancy.salary,
-            text=text_for_llm,
-            model=model or config.OLLAMA_MODEL,
-        )
+        # Когда карточка не отправляется (ниже порога при выключенной опции),
+        # дорогой LLM-разбор не нужен — просто сохраняем факт вакансии в БД.
+        summary = ""
+        if notify:
+            summary = await llm.analyze_vacancy(
+                title=vacancy.title,
+                company=vacancy.company,
+                salary=vacancy.salary,
+                text=text_for_llm,
+                model=model or config.OLLAMA_MODEL,
+            )
 
         status = "below_threshold" if match_result and match_result.verdict == "SKIP" else "shown"
 
@@ -332,6 +355,9 @@ class ScanService:
             resume_id=resume_id,
         )
 
+        if not notify or not self.notifier:
+            return
+
         inject_warn = ""
         if san.is_suspicious:
             inject_warn = (
@@ -339,9 +365,6 @@ class ScanService:
                 f"подозрительные фрагменты ({', '.join(san.found_tags)}). "
                 "Они нейтрализованы."
             )
-
-        if not self.notifier:
-            return
 
         text = format_vacancy_message(vacancy, summary, match_result, inject_warn)
         kb = build_vacancy_keyboard(vacancy, match_result)
@@ -355,6 +378,12 @@ class ScanService:
             )
         except Exception as e:
             log.error("Ошибка отправки в Telegram: %s", e)
+
+    async def _notify_below_threshold_enabled(self) -> bool:
+        raw = await self.settings_repo.get("notify_below_threshold", "")
+        if raw:
+            return raw.lower() in ("1", "true", "yes", "on")
+        return config.NOTIFY_BELOW_THRESHOLD
 
     async def _experience_filter_enabled(self) -> bool:
         raw = await self.settings_repo.get("experience_filter", "")

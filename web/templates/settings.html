@@ -102,6 +102,27 @@
           </select>
         </div>
         <div class="field" style="margin-bottom:0">
+          <label>Тип занятости</label>
+          <select name="hh_employment" class="input">
+            <option value=""        {% if hh_employment == ""        %}selected{% endif %}>Любой</option>
+            <option value="full"    {% if hh_employment == "full"    %}selected{% endif %}>Полная</option>
+            <option value="part"    {% if hh_employment == "part"    %}selected{% endif %}>Частичная</option>
+            <option value="project" {% if hh_employment == "project" %}selected{% endif %}>Проектная</option>
+            <option value="probation"{% if hh_employment == "probation"%}selected{% endif %}>Стажировка</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px;">
+        <div class="field" style="margin-bottom:0">
+          <label>Мой опыт работы (лет)</label>
+          <input type="number" name="candidate_experience_years" value="{{ candidate_experience_years }}"
+                 min="0" max="50" step="1" class="input" placeholder="авто из резюме">
+          <div style="font-size:12px; color:#9ca3af; margin-top:4px;">
+            Фильтр опыта на HH: 2 → «1–3 года». Пусто — берётся из резюме.
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:0">
           <label>Мин. зарплата (руб.)</label>
           <input type="number" name="salary_from" value="{{ salary_from }}" min="0" step="10000" class="input" placeholder="0 — без фильтра">
         </div>
@@ -124,11 +145,14 @@
       <div class="field" style="margin-bottom:0">
         <label>Максимум вакансий за один скан</label>
         <div class="range-wrap">
-          <input type="range" name="max_vacancies" min="1" max="50" value="{{ max_vacancies }}"
+          <input type="range" name="max_vacancies" min="1" max="200" step="5" value="{{ max_vacancies }}"
                  id="maxVacRange" oninput="document.getElementById('maxVacVal').textContent=this.value">
           <span class="range-val" id="maxVacVal">{{ max_vacancies }}</span>
         </div>
-        <div class="field-hint">Чем меньше — тем быстрее скан (и меньше риск ограничений HH)</div>
+        <div class="field-hint">
+          Сканер листает страницы поиска HH (по 50 на страницу). Чем больше — тем дольше скан
+          и выше риск ограничений HH. Ориентир: 50–100.
+        </div>
       </div>
     </div>
   </div>
@@ -147,6 +171,17 @@
         <div class="field-hint">
           Вакансии ниже порога показываются с предупреждением и кнопкой «Откликнуться всё равно».
           Рекомендуемое значение: 55–70%.
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500; font-size:13.5px; color:#374151;">
+          <input type="checkbox" name="notify_below_threshold" value="on" {% if notify_below_threshold %}checked{% endif %}
+                 style="width:15px; height:15px; border-radius:4px; accent-color:#6366f1; cursor:pointer;">
+          Отправлять в Telegram вакансии ниже порога
+        </label>
+        <div class="field-hint">
+          Если выключено — вакансии с совпадением ниже порога сохраняются в базу (статус «ниже порога»)
+          и видны в веб-интерфейсе, но не приходят в Telegram. Экономит время и убирает шум.
         </div>
       </div>
     </div>

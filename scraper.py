@@ -28,9 +28,33 @@ from playwright.async_api import (
 )
 
 from config import SESSION_FILE, MAX_VACANCIES
+import experience
+import hh_filters
+import pagination
 import storage
 
 log = logging.getLogger(__name__)
+
+
+async def _resolve_experience_years() -> float | None:
+    """Опыт кандидата для фильтра HH: настройка > авто-вычисление из резюме.
+
+    Настройка ``candidate_experience_years`` пустая → берём стаж из активного
+    резюме (как в пост-фильтре). Если ничего нет — None (фильтр опыта не ставим).
+    """
+    raw = (await storage.get_setting("candidate_experience_years", "") or "").strip()
+    if raw:
+        try:
+            return float(raw.replace(",", "."))
+        except ValueError:
+            pass
+    try:
+        active = await storage.get_active_resume()
+    except Exception:
+        active = None
+    if active and active.get("raw_text"):
+        return experience.parse_resume_years(active["raw_text"])
+    return None
 
 # Случайный User-Agent, чтобы выглядеть как обычный пользователь
 _USER_AGENT = (
@@ -470,10 +494,17 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
     period = await storage.get_setting("hh_search_period", str(cfg.HH_SEARCH_PERIOD))
     max_from_settings = await storage.get_setting("max_vacancies", str(limit))
     hh_schedule = await storage.get_setting("hh_schedule", "")
+    hh_employment = await storage.get_setting("hh_employment", "")
+    hh_work_format = await storage.get_setting("hh_work_format", "")
     salary_from = await storage.get_setting("salary_from", "0")
     only_with_salary = await storage.get_setting("only_with_salary", "false")
+
+    # Опыт для фильтра HH: явная настройка приоритетнее, иначе берём из резюме.
+    experience_years = await _resolve_experience_years()
+    # Настройка из БД — источник истины (раньше min() c config жёстко резал до 15).
+    # Пагинация позволяет собирать с нескольких страниц; 200 — защитный потолок.
     try:
-        limit = min(limit, int(max_from_settings))
+        limit = max(1, min(int(max_from_settings), 200))
     except ValueError:
         pass
 
@@ -486,76 +517,93 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
         await context.add_init_script(_STEALTH_SCRIPT)
         page: Page = await context.new_page()
 
-        # Поиск: сортировка по дате, только свежие (за сутки)
-        encoded_query = query.replace(" ", "+")
-        search_url = (
-            f"https://hh.ru/search/vacancy"
-            f"?text={encoded_query}"
-            f"&area={region}"
-            f"&order_by=publication_time"
-            f"&search_period={period}"
-            f"&per_page=50"
+        # Поиск: сортировка по дате + все фильтры (опыт/формат/занятость/зарплата).
+        search_url = hh_filters.build_search_url(
+            query,
+            region=region,
+            period=period,
+            schedule=hh_schedule,
+            salary_from=salary_from,
+            only_with_salary=only_with_salary,
+            experience_years=experience_years,
+            employment=hh_employment,
+            work_format=hh_work_format,
+            per_page=50,
         )
-        if hh_schedule:
-            search_url += f"&schedule={hh_schedule}"
+        log.info("URL поиска: %s", search_url)
+
+        # Парсинг карточек одной страницы поиска (без полного текста вакансии).
+        async def fetch_page_cards(page_num: int) -> list[VacancyData]:
+            page_url = f"{search_url}&page={page_num}"
+            await page.goto(page_url, wait_until="domcontentloaded", timeout=30_000)
+            await asyncio.sleep(2)
+
+            # Если редирект на логин — сессия истекла
+            if "account/login" in page.url:
+                raise RuntimeError("SESSION_EXPIRED")
+
+            await _scroll_to_load_all(page)
+
+            cards = page.locator('[data-qa="vacancy-serp__vacancy"]')
+            total = await cards.count()
+            page_cards: list[VacancyData] = []
+
+            for i in range(total):
+                card = cards.nth(i)
+
+                title_loc = card.locator('[data-qa="serp-item__title-text"]').first
+                if await title_loc.count() == 0:
+                    continue
+                title = (await title_loc.inner_text()).strip()
+
+                href_loc = card.locator('a[data-qa="serp-item__title"]').first
+                href = await href_loc.get_attribute("href") or ""
+                m = re.search(r"/vacancy/(\d+)", href)
+                if not m:
+                    continue
+                vacancy_id = m.group(1)
+                url = f"https://hh.ru/vacancy/{vacancy_id}"
+
+                company_loc = card.locator('[data-qa="vacancy-serp__vacancy-employer"]').first
+                company = (await company_loc.inner_text()).strip() if await company_loc.count() > 0 else "Не указана"
+
+                # Зарплата больше не имеет своего data-qa — берём строку с ₽ из текста карточки
+                salary = ""
+                salary_loc = card.locator('[data-qa="vacancy-serp__vacancy-compensation"]').first
+                if await salary_loc.count() > 0:
+                    salary = (await salary_loc.inner_text()).strip()
+                else:
+                    card_text = await card.inner_text()
+                    for line in card_text.splitlines():
+                        line = line.strip()
+                        if "₽" in line or re.search(r"\bруб", line, re.IGNORECASE):
+                            salary = line
+                            break
+
+                page_cards.append(
+                    VacancyData(id=vacancy_id, title=title, company=company, salary=salary, url=url)
+                )
+
+            return page_cards
+
+        # Листаем страницы, пока не наберём `limit` уникальных НОВЫХ вакансий.
+        # is_seen=storage.is_seen → число в настройках = количество новых вакансий,
+        # а не карточек на странице (иначе скан «ничего не находит» из-за виденных).
         try:
-            sal = int(salary_from)
-            if sal > 0:
-                search_url += f"&salary={sal}&currency=RUR"
-        except (ValueError, TypeError):
-            pass
-        if only_with_salary.lower() in ("true", "on", "1", "yes"):
-            search_url += "&only_with_salary=true"
-
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
-        await asyncio.sleep(2)
-
-        # Если редирект на логин — сессия истекла
-        if "account/login" in page.url:
-            await browser.close()
-            raise RuntimeError("SESSION_EXPIRED")
-
-        await _scroll_to_load_all(page)
-
-        # --- Парсим карточки ---
-        cards = page.locator('[data-qa="vacancy-serp__vacancy"]')
-        total = await cards.count()
-
-        for i in range(min(total, limit)):
-            card = cards.nth(i)
-
-            title_loc = card.locator('[data-qa="serp-item__title-text"]').first
-            if await title_loc.count() == 0:
-                continue
-            title = (await title_loc.inner_text()).strip()
-
-            href_loc = card.locator('a[data-qa="serp-item__title"]').first
-            href = await href_loc.get_attribute("href") or ""
-            m = re.search(r"/vacancy/(\d+)", href)
-            if not m:
-                continue
-            vacancy_id = m.group(1)
-            url = f"https://hh.ru/vacancy/{vacancy_id}"
-
-            company_loc = card.locator('[data-qa="vacancy-serp__vacancy-employer"]').first
-            company = (await company_loc.inner_text()).strip() if await company_loc.count() > 0 else "Не указана"
-
-            # Зарплата больше не имеет своего data-qa — берём строку с ₽ из текста карточки
-            salary = ""
-            salary_loc = card.locator('[data-qa="vacancy-serp__vacancy-compensation"]').first
-            if await salary_loc.count() > 0:
-                salary = (await salary_loc.inner_text()).strip()
-            else:
-                card_text = await card.inner_text()
-                for line in card_text.splitlines():
-                    line = line.strip()
-                    if "₽" in line or re.search(r"\bруб", line, re.IGNORECASE):
-                        salary = line
-                        break
-
-            results.append(
-                VacancyData(id=vacancy_id, title=title, company=company, salary=salary, url=url)
+            results, pages_visited = await pagination.collect_unique(
+                fetch_page_cards,
+                limit,
+                is_seen=storage.is_seen,
+                max_pages=cfg.SCAN_MAX_PAGES,
             )
+        except RuntimeError:
+            await browser.close()
+            raise
+
+        log.info(
+            "Поиск «%s»: новых вакансий %d за %d стр. (лимит %d)",
+            query, len(results), pages_visited, limit,
+        )
 
         # --- Забираем полный текст и требуемый опыт для каждой вакансии ---
         for v in results:
