@@ -14,6 +14,12 @@ MAX_VACANCIES         = int(os.getenv("MAX_VACANCIES_PER_SCAN", "15"))
 DEFAULT_QUERY         = os.getenv("DEFAULT_SEARCH_QUERY", "Python разработчик")
 SESSION_FILE          = os.getenv("SESSION_FILE", "hh_session.json")
 
+# Очередь задач: если REDIS_URL пуст — задачи выполняются inline (без воркера).
+REDIS_URL             = os.getenv("REDIS_URL", "")
+SCAN_JOB_TIMEOUT_SEC  = int(os.getenv("SCAN_JOB_TIMEOUT_SEC", "1800"))
+SCAN_JOB_MAX_TRIES    = int(os.getenv("SCAN_JOB_MAX_TRIES", "2"))
+BROWSER_LOCK_TTL_SEC  = int(os.getenv("BROWSER_LOCK_TTL_SEC", "900"))
+
 WEB_HOST             = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT             = int(os.getenv("WEB_PORT", "8080"))
 MIN_MATCH_THRESHOLD  = float(os.getenv("MIN_MATCH_THRESHOLD", "0.65"))

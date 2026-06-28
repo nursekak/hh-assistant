@@ -49,4 +49,8 @@ except Exception as exc:
     print(f"Warning: could not verify/pull model: {exc}", file=sys.stderr)
 PY
 
-exec python bot.py
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+else
+    exec python bot.py
+fi

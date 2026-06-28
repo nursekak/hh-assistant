@@ -16,20 +16,46 @@ services:
               count: 1
               capabilities: [gpu]
 
+  redis:
+    image: redis:7-alpine
+    container_name: hh-bot-redis
+    restart: unless-stopped
+    volumes:
+      - ./data/redis:/data
+
   bot:
     build: .
     container_name: hh-bot
     depends_on:
       - ollama
+      - redis
     env_file: .env
     environment:
       OLLAMA_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
       DB_PATH: data/hh_bot.db
       SESSION_FILE: data/hh_session.json
       WEB_HOST: 0.0.0.0
       WEB_PORT: "8080"
     ports:
       - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  worker:
+    build: .
+    container_name: hh-bot-worker
+    command: ["python", "worker_main.py"]
+    depends_on:
+      - ollama
+      - redis
+    env_file: .env
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
+      DB_PATH: data/hh_bot.db
+      SESSION_FILE: data/hh_session.json
     volumes:
       - ./data:/app/data
     restart: unless-stopped

@@ -179,7 +179,7 @@ hh-assistant/
 ├── sanitizer.py        # Защита от prompt injection
 ├── llm.py              # Ollama API (анализ вакансий)
 ├── storage.py          # aiosqlite: вакансии, резюме, настройки
-├── scan_state.py       # Состояние текущего скана (live-мониторинг)
+├── scan_state.py       # Модель ответа /api/scan/status (данные в scan_jobs)
 ├── config.py           # Конфигурация из .env
 ├── web/
 │   ├── app.py          # FastAPI роутер

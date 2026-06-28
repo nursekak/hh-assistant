@@ -14,3 +14,7 @@ python-multipart==0.0.9
 # Матчинг
 scikit-learn==1.5.2
 numpy==1.26.4
+
+# Очередь задач (воркер)
+arq==0.26.3
+redis==5.2.1
