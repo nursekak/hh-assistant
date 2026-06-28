@@ -25,6 +25,8 @@ _SYSTEM = """Ты — карьерный консультант. Пишешь к
 - Акцентируй навыки из списка «совпавшие», которые важны для вакансии
 - Не выдумывай опыт, которого нет в резюме
 - Без шаблонных фраз «уверен, что стану ценным сотрудником»
+- Если указано имя кандидата — обратись от первого лица и подпиши письмо этим именем в конце («С уважением, <Имя>»)
+- Не используй плейсхолдеры вроде «[Ваше имя]» или «[Имя]»
 - Верни только текст письма, без заголовков и пояснений"""
 
 
@@ -37,7 +39,14 @@ async def generate_cover_letter(
     model: str = OLLAMA_MODEL,
     backend: str = "",
     api_key: str = "",
+    candidate_name: str = "",
 ) -> str:
+    name = (candidate_name or "").strip()
+    name_block = (
+        f"\n\nИмя кандидата: {name}\nОбязательно подпиши письмо: «С уважением, {name}»."
+        if name
+        else "\n\nИмя кандидата не указано — не добавляй подпись и не используй плейсхолдеры вроде «[Ваше имя]»."
+    )
     prompt = f"""Напиши сопроводительное письмо для отклика на вакансию.
 
 Компания: {company}
@@ -50,7 +59,7 @@ async def generate_cover_letter(
 {json.dumps(asdict(resume), ensure_ascii=False, indent=2)}
 
 Совпавшие навыки (обязательно упомяни):
-{', '.join(matched) or '—'}"""
+{', '.join(matched) or '—'}{name_block}"""
 
     effective_backend = backend or COVER_LETTER_BACKEND
     effective_key = api_key or ANTHROPIC_API_KEY

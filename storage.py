@@ -2,6 +2,7 @@
 Асинхронная SQLite-база для хранения вакансий, резюме и настроек.
 """
 
+import hashlib
 import json
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -9,6 +10,10 @@ from typing import Any, Optional
 import aiosqlite
 
 from config import DB_PATH
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
 async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, definition: str) -> None:
@@ -49,6 +54,24 @@ async def init_db() -> None:
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS resume_versions (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                resume_id     TEXT NOT NULL,
+                version       INTEGER NOT NULL,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                raw_text      TEXT DEFAULT '',
+                profile_json  TEXT DEFAULT '',
+                keywords      TEXT DEFAULT '[]',
+                content_hash  TEXT DEFAULT '',
+                is_current    INTEGER DEFAULT 0,
+                UNIQUE(resume_id, version)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resume_versions_resume "
+            "ON resume_versions(resume_id, version DESC)"
+        )
         for col, defn in [
             ("match_score", "REAL DEFAULT 0"),
             ("matched_skills", "TEXT DEFAULT '[]'"),
@@ -63,6 +86,7 @@ async def init_db() -> None:
         ]:
             await _ensure_column(db, "vacancies", col, defn)
         await _ensure_column(db, "resumes", "profile_json", "TEXT DEFAULT ''")
+        await _ensure_column(db, "resumes", "active_version", "INTEGER DEFAULT 0")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scan_jobs (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,19 +299,67 @@ async def save_resume(
     profile_json: str = "",
     parsed_at: Optional[str] = None,
 ) -> None:
+    """Сохраняет резюме версионно.
+
+    Таблица resumes — «голова» (актуальный снапшот для matcher/letter/scan).
+    Каждое изменение raw_text создаёт неизменяемую строку в resume_versions.
+    Повторный парсинг идентичного текста новую версию не плодит (дедуп по hash),
+    но обновляет profile_json текущей версии (профиль мог быть переизвлечён).
+    """
     kw_json = json.dumps(keywords or [], ensure_ascii=False)
     parsed = parsed_at or datetime.utcnow().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
+        # Голова существует всегда; при первом сохранении только метаданные.
         await db.execute(
             """INSERT INTO resumes (id, title, raw_text, keywords, profile_json, parsed_at)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 title = excluded.title,
-                 raw_text = excluded.raw_text,
-                 keywords = excluded.keywords,
-                 profile_json = excluded.profile_json,
-                 parsed_at = excluded.parsed_at""",
-            (resume_id, title, raw_text, kw_json, profile_json, parsed),
+               VALUES (?, ?, '', '[]', '', ?)
+               ON CONFLICT(id) DO UPDATE SET title = excluded.title""",
+            (resume_id, title, parsed),
+        )
+
+        # Без текста (например, fetch_from_hh сохраняет только заголовок) —
+        # версии не трогаем и не затираем уже сохранённый снапшот.
+        if not raw_text:
+            await db.commit()
+            return
+
+        content_hash = _content_hash(raw_text)
+        cur = await db.execute(
+            "SELECT id, version, content_hash FROM resume_versions "
+            "WHERE resume_id = ? AND is_current = 1",
+            (resume_id,),
+        )
+        current = await cur.fetchone()
+
+        if current and current[2] == content_hash:
+            # Текст не изменился — обновляем профиль/ключевые слова текущей версии.
+            await db.execute(
+                "UPDATE resume_versions SET profile_json = ?, keywords = ? WHERE id = ?",
+                (profile_json, kw_json, current[0]),
+            )
+            active_version = current[1]
+        else:
+            next_version = (current[1] + 1) if current else 1
+            await db.execute(
+                "UPDATE resume_versions SET is_current = 0 WHERE resume_id = ?",
+                (resume_id,),
+            )
+            await db.execute(
+                """INSERT INTO resume_versions
+                   (resume_id, version, created_at, raw_text, profile_json,
+                    keywords, content_hash, is_current)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                (resume_id, next_version, parsed, raw_text, profile_json, kw_json, content_hash),
+            )
+            active_version = next_version
+
+        # Зеркалируем актуальный снапшот в голову (backward-compat для читателей).
+        await db.execute(
+            """UPDATE resumes
+               SET title = ?, raw_text = ?, keywords = ?, profile_json = ?,
+                   parsed_at = ?, active_version = ?
+               WHERE id = ?""",
+            (title, raw_text, kw_json, profile_json, parsed, active_version, resume_id),
         )
         await db.commit()
 
@@ -311,6 +383,70 @@ async def get_active_resume() -> Optional[dict]:
         d["profile"] = json.loads(d.get("profile_json") or "null") if d.get("profile_json") else None
         d["is_active"] = True
         return d
+
+
+# ---- Resume versions ----
+
+def _version_row_to_dict(row: aiosqlite.Row, with_text: bool = False) -> dict:
+    d = dict(row)
+    d["keywords"] = json.loads(d.get("keywords") or "[]")
+    d["profile"] = json.loads(d.get("profile_json") or "null") if d.get("profile_json") else None
+    d["is_current"] = bool(d.get("is_current"))
+    if not with_text:
+        d.pop("raw_text", None)
+    return d
+
+
+async def get_resume_versions(resume_id: str) -> list[dict]:
+    """История версий резюме (без полного текста, новые сверху)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM resume_versions WHERE resume_id = ? ORDER BY version DESC",
+            (resume_id,),
+        )
+        rows = await cur.fetchall()
+        return [_version_row_to_dict(r) for r in rows]
+
+
+async def get_resume_version(resume_id: str, version: int) -> Optional[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM resume_versions WHERE resume_id = ? AND version = ?",
+            (resume_id, version),
+        )
+        row = await cur.fetchone()
+        return _version_row_to_dict(row, with_text=True) if row else None
+
+
+async def restore_resume_version(resume_id: str, version: int) -> bool:
+    """Делает указанную версию текущей и зеркалирует её в голову (rollback)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM resume_versions WHERE resume_id = ? AND version = ?",
+            (resume_id, version),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return False
+        await db.execute(
+            "UPDATE resume_versions SET is_current = 0 WHERE resume_id = ?",
+            (resume_id,),
+        )
+        await db.execute(
+            "UPDATE resume_versions SET is_current = 1 WHERE id = ?",
+            (row["id"],),
+        )
+        await db.execute(
+            """UPDATE resumes
+               SET raw_text = ?, keywords = ?, profile_json = ?, active_version = ?
+               WHERE id = ?""",
+            (row["raw_text"], row["keywords"], row["profile_json"], version, resume_id),
+        )
+        await db.commit()
+        return True
 
 
 # ---- Settings ----

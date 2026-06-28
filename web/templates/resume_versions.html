@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}История версий резюме — HH Ассистент{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">История версий резюме</div>
+    <div class="page-sub">Неизменяемые снимки резюме. Можно вернуться к любой версии.</div>
+  </div>
+  <a href="/resumes" class="btn btn-secondary">← К резюме</a>
+</div>
+
+<div style="display:flex; flex-direction:column; gap:12px;">
+  {% for v in versions %}
+  <div class="card {% if v.is_current %}ring{% endif %}"
+       style="{% if v.is_current %}border-color:#a5b4fc; box-shadow:0 0 0 3px rgba(99,102,241,0.12);{% endif %}">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div style="font-size:15px; font-weight:700; color:#1e293b;">Версия {{ v.version }}</div>
+        {% if v.is_current %}
+        <span class="badge badge-purple">● Текущая</span>
+        {% endif %}
+        {% if v.keywords %}
+        <span class="badge badge-gray">{{ v.keywords|length }} навыков</span>
+        {% endif %}
+        <span style="font-size:12px; color:#94a3b8;">{{ v.created_at }}</span>
+      </div>
+      {% if not v.is_current %}
+      <form method="post" action="/resumes/{{ resume_id }}/versions/{{ v.version }}/restore" style="margin:0;">
+        <button type="submit" class="btn btn-secondary btn-sm">Вернуть эту версию</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if v.keywords %}
+    <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:4px;">
+      {% for kw in v.keywords %}
+      <span class="pill pill-default">{{ kw }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="card" style="text-align:center; padding:40px; color:#cbd5e1;">
+    <div style="font-size:14px; font-weight:500;">Версий пока нет</div>
+    <div style="font-size:13px;">Нажмите «Переспарсить» на странице резюме.</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

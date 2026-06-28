@@ -30,6 +30,7 @@ class SettingsView:
     cover_letter_backend: str
     anthropic_api_key: str
     anthropic_model: str
+    candidate_name: str
     # Scheduler
     interval: int
 
@@ -74,6 +75,7 @@ class SettingsService:
             "anthropic_model",
             config.ANTHROPIC_MODEL,
         )
+        candidate_name = await self.settings_repo.get("candidate_name", config.CANDIDATE_NAME)
 
         interval = await self._get_int("scan_interval_hours", config.SCAN_INTERVAL_HOURS)
 
@@ -92,6 +94,7 @@ class SettingsService:
             cover_letter_backend=cover_letter_backend,
             anthropic_api_key=anthropic_api_key,
             anthropic_model=anthropic_model,
+            candidate_name=candidate_name,
             interval=interval,
         )
 
@@ -137,6 +140,9 @@ class SettingsService:
         anthropic_model = str(form.get("anthropic_model", "")).strip()
         if anthropic_model:
             values["anthropic_model"] = anthropic_model
+
+        # Имя кандидата сохраняем всегда (в т.ч. пустую строку — намеренная очистка).
+        values["candidate_name"] = str(form.get("candidate_name", "")).strip()
 
         await self.settings_repo.set_many(values)
         return interval

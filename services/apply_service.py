@@ -41,6 +41,7 @@ class ApplyService:
         model = await self.settings_repo.get("ollama_model", config.OLLAMA_MODEL)
         cl_backend = await self.settings_repo.get("cover_letter_backend", "")
         cl_api_key = await self.settings_repo.get("anthropic_api_key", "")
+        candidate_name = await self.settings_repo.get("candidate_name", config.CANDIDATE_NAME)
 
         cover = await letter.generate_cover_letter(
             vac_profile,
@@ -51,6 +52,7 @@ class ApplyService:
             model=model,
             backend=cl_backend,
             api_key=cl_api_key,
+            candidate_name=candidate_name,
         )
         await self.vacancy_repo.set_cover_letter(vacancy_id, cover)
         return vacancy, cover

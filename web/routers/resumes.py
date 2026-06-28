@@ -50,3 +50,19 @@ async def reparse_resume(resume_id: str):
         return RedirectResponse("/resumes?msg=Ключевые+слова+обновлены", status_code=303)
     except Exception as e:
         return RedirectResponse(f"/resumes?msg=Ошибка:+{e}", status_code=303)
+
+
+@router.get("/{resume_id}/versions", response_class=HTMLResponse)
+async def resume_versions(resume_id: str, request: Request):
+    versions = await resume_service.list_versions(resume_id)
+    return templates.TemplateResponse(
+        "resume_versions.html",
+        {"request": request, "resume_id": resume_id, "versions": versions},
+    )
+
+
+@router.post("/{resume_id}/versions/{version}/restore")
+async def restore_version(resume_id: str, version: int):
+    ok = await resume_service.restore_version(resume_id, version)
+    msg = f"Восстановлена+версия+{version}" if ok else "Версия+не+найдена"
+    return RedirectResponse(f"/resumes?msg={msg}", status_code=303)
