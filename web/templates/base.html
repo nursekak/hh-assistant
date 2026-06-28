@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}HH Ассистент{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #f0f2f8; margin: 0; }
+
+    /* ── Sidebar ───────────────────────────── */
+    .sidebar {
+      background: linear-gradient(170deg, #1e1b4b 0%, #312e81 55%, #4338ca 100%);
+      width: 220px; min-height: 100vh; padding: 20px 10px;
+      display: flex; flex-direction: column;
+      position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+    }
+    .sidebar-logo {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px 22px; margin-bottom: 4px;
+    }
+    .sidebar-logo-icon {
+      width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+      background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+      display: flex; align-items: center; justify-content: center; font-size: 17px;
+      box-shadow: 0 2px 8px rgba(129,140,248,0.4);
+    }
+    .sidebar-logo-text { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2; }
+    .sidebar-logo-sub  { font-size: 11px; color: rgba(199,210,254,0.55); }
+
+    .nav-link {
+      display: flex; align-items: center; gap: 9px;
+      padding: 9px 10px; border-radius: 10px; margin-bottom: 1px;
+      font-size: 13.5px; font-weight: 500; color: rgba(199,210,254,0.8);
+      text-decoration: none; transition: all 0.18s ease; white-space: nowrap;
+    }
+    .nav-link svg { flex-shrink: 0; opacity: 0.75; transition: opacity 0.18s; }
+    .nav-link:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .nav-link:hover svg { opacity: 1; }
+    .nav-link.active {
+      background: rgba(255,255,255,0.17); color: #fff;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+    }
+    .nav-link.active svg { opacity: 1; }
+    .nav-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 8px 6px; }
+    .sidebar-footer { padding: 12px 10px 4px; border-top: 1px solid rgba(255,255,255,0.07); margin-top: 8px; }
+    .sidebar-footer span { font-size: 11px; color: rgba(199,210,254,0.35); }
+
+    /* ── Layout ───────────────────────────── */
+    .main-wrap { margin-left: 220px; min-height: 100vh; padding: 28px 30px; }
+
+    /* ── Cards ───────────────────────────── */
+    .card {
+      background: #fff; border-radius: 16px;
+      border: 1px solid #e8edf3; padding: 22px 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.03);
+    }
+    .card-title { font-size: 14px; font-weight: 600; color: #1e293b; margin-bottom: 16px; display: flex; align-items: center; gap: 7px; }
+    .card-title svg { opacity: 0.5; }
+
+    /* ── Inputs ───────────────────────────── */
+    .field { margin-bottom: 18px; }
+    .field label { display: block; font-size: 12.5px; font-weight: 600; color: #475569; margin-bottom: 6px; letter-spacing: 0.01em; }
+    .field-hint { font-size: 11.5px; color: #94a3b8; margin-top: 5px; line-height: 1.5; }
+    .input {
+      width: 100%; border: 1.5px solid #dde3ec; border-radius: 10px;
+      padding: 9px 13px; font-size: 13.5px; font-family: inherit;
+      background: #fafbfd; color: #1e293b; outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    }
+    .input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(129,140,248,0.12); background: #fff; }
+    select.input { cursor: pointer; }
+
+    /* ── Toggle ───────────────────────────── */
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+    .toggle-track {
+      position: relative; width: 40px; height: 22px; border-radius: 999px;
+      background: #dde3ec; transition: background 0.2s; flex-shrink: 0;
+    }
+    .toggle-track::after {
+      content: ''; position: absolute; width: 16px; height: 16px;
+      border-radius: 50%; background: #fff; top: 3px; left: 3px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2); transition: transform 0.2s;
+    }
+    input[type=checkbox]:checked ~ .toggle-track { background: #6366f1; }
+    input[type=checkbox]:checked ~ .toggle-track::after { transform: translateX(18px); }
+    .toggle-wrap input[type=checkbox] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+    /* ── Range slider ───────────────────────── */
+    .range-wrap { display: flex; align-items: center; gap: 12px; }
+    .range-val { font-size: 13px; font-weight: 600; color: #6366f1; min-width: 46px; text-align: right; }
+    input[type=range] {
+      flex: 1; -webkit-appearance: none; appearance: none; height: 4px;
+      border-radius: 4px; background: #e2e8f0; outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+      background: #6366f1; cursor: pointer; border: 3px solid #fff;
+      box-shadow: 0 2px 6px rgba(99,102,241,0.4); transition: transform 0.15s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+    /* ── Buttons ───────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 18px; border-radius: 10px; font-size: 13.5px; font-weight: 600;
+      border: none; cursor: pointer; font-family: inherit; transition: all 0.15s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+      color: #fff; box-shadow: 0 2px 10px rgba(99,102,241,0.3);
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(99,102,241,0.4); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-secondary {
+      background: #f1f5f9; color: #475569; border: 1px solid #dde3ec;
+    }
+    .btn-secondary:hover { background: #e2e8f0; color: #334155; }
+    .btn-danger { background: #fff1f2; color: #dc2626; border: 1.5px solid #fecaca; }
+    .btn-danger:hover { background: #fee2e2; }
+    .btn-success { background: #f0fdf4; color: #16a34a; border: 1.5px solid #bbf7d0; }
+    .btn-success:hover { background: #dcfce7; }
+    .btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 8px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+
+    /* ── Badges ───────────────────────────── */
+    .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+    .badge-blue   { background: #dbeafe; color: #1d4ed8; }
+    .badge-green  { background: #dcfce7; color: #15803d; }
+    .badge-red    { background: #fee2e2; color: #dc2626; }
+    .badge-orange { background: #ffedd5; color: #c2410c; }
+    .badge-gray   { background: #f1f5f9; color: #64748b; }
+    .badge-purple { background: #ede9fe; color: #7c3aed; }
+
+    /* ── Skill pills ───────────────────────── */
+    .pill { display: inline-flex; align-items: center; font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 999px; border: 1px solid transparent; }
+    .pill-default { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .pill-green   { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .pill-red     { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .pill-blue    { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+    .pill-purple  { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+
+    /* ── Table ───────────────────────────── */
+    .tbl { width: 100%; border-collapse: collapse; }
+    .tbl th {
+      padding: 10px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #94a3b8; background: #f8fafc; text-align: left;
+      border-bottom: 2px solid #f1f5f9;
+    }
+    .tbl td {
+      padding: 11px 14px; font-size: 13px; color: #374151;
+      border-bottom: 1px solid #f8fafc; vertical-align: top;
+    }
+    .tbl tbody tr:last-child td { border-bottom: none; }
+    .tbl tbody tr:hover td { background: #fafbff; }
+
+    /* ── Alerts ───────────────────────────── */
+    .alert { padding: 12px 16px; border-radius: 10px; font-size: 13px; margin-bottom: 18px; display: flex; align-items: flex-start; gap: 8px; }
+    .alert-success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .alert-warn    { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .alert-error   { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .alert-info    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+
+    /* ── Tabs (settings) ────────────────── */
+    .tab-bar { display: flex; gap: 4px; padding: 4px; background: #f1f5f9; border-radius: 12px; margin-bottom: 24px; }
+    .tab-btn {
+      flex: 1; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 500;
+      border: none; cursor: pointer; font-family: inherit; transition: all 0.18s;
+      background: transparent; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .tab-btn:hover { background: rgba(255,255,255,0.6); color: #334155; }
+    .tab-btn.tab-active { background: #fff; color: #6366f1; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+
+    /* ── Log box ─────────────────────────── */
+    .logbox {
+      background: #0f172a; border-radius: 12px; padding: 14px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px; line-height: 1.65; color: #94a3b8; overflow-y: auto;
+    }
+    .logbox-ts { color: #334155; }
+    .logbox-msg { color: #cbd5e1; }
+
+    /* ── Progress ─────────────────────────── */
+    .progress-bar { height: 6px; border-radius: 6px; background: #e2e8f0; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #6366f1, #818cf8); transition: width 0.4s ease; }
+
+    /* ── Scrollbar ─────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* ── Stat card ─────────────────────────── */
+    .stat-card { background: #fff; border-radius: 14px; border: 1px solid #e8edf3; padding: 16px 18px; }
+    .stat-label { font-size: 12px; font-weight: 500; color: #94a3b8; margin-bottom: 6px; }
+    .stat-value { font-size: 22px; font-weight: 700; color: #1e293b; line-height: 1.1; }
+    .stat-sub   { font-size: 12px; color: #94a3b8; margin-top: 3px; }
+
+    /* ── Page header ─────────────────────────── */
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .page-title  { font-size: 20px; font-weight: 700; color: #1e293b; }
+    .page-sub    { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+
+    /* ── Dot status ─────────────────────────── */
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.2); }
+    .dot-red    { background: #ef4444; box-shadow: 0 0 0 2px rgba(239,68,68,0.2); }
+    .dot-gray   { background: #94a3b8; }
+    .dot-pulse  { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
+
+    /* ── Responsive ─────────────────────────── */
+    @media (max-width: 768px) {
+      .sidebar { width: 56px; }
+      .sidebar-logo-text, .sidebar-logo-sub, .nav-link span { display: none; }
+      .nav-link { justify-content: center; padding: 10px; }
+      .main-wrap { margin-left: 56px; padding: 16px; }
+    }
+  </style>
+</head>
+<body x-data>
+  <div style="display:flex; min-height:100vh;">
+
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">🤖</div>
+        <div>
+          <div class="sidebar-logo-text">HH Ассистент</div>
+          <div class="sidebar-logo-sub">Авто-отклики</div>
+        </div>
+      </div>
+
+      <nav style="flex:1; display:flex; flex-direction:column; gap:1px;">
+        {% set p = request.url.path %}
+        <a href="/" class="nav-link {% if p == '/' %}active{% endif %}">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          <span>Дашборд</span>
+        </a>
+        <a href="/resumes" class="nav-link {% if '/resumes' in p %}active{% endif %}">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <span>Резюме</span>
+        </a>
+        <a href="/vacancies" class="nav-link {% if '/vacancies' in p %}active{% endif %}">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+          <span>Вакансии</span>
+        </a>
+        <a href="/analytics" class="nav-link {% if '/analytics' in p %}active{% endif %}">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>Аналитика</span>
+        </a>
+
+        <div class="nav-sep"></div>
+
+        <a href="/settings" class="nav-link {% if '/settings' in p %}active{% endif %}">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Настройки</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span>v2.1 · Ollama</span>
+      </div>
+    </aside>
+
+    <!-- ── Main ── -->
+    <main class="main-wrap" style="flex:1;">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

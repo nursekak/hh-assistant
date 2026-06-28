@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Резюме — HH Ассистент{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">Резюме</div>
+    <div class="page-sub">Управление резюме и анализ скиллов</div>
+  </div>
+  <form method="post" action="/resumes/fetch">
+    <button type="submit" class="btn btn-primary">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.17"/></svg>
+      Загрузить с HH.ru
+    </button>
+  </form>
+</div>
+
+{% if message %}
+<div class="alert alert-info">
+  <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  {{ message }}
+</div>
+{% endif %}
+
+<div style="display:flex; flex-direction:column; gap:14px;">
+  {% for r in resumes %}
+  <div class="card {% if r.is_active %}ring{% endif %}" style="{% if r.is_active %}border-color:#a5b4fc; box-shadow:0 0 0 3px rgba(99,102,241,0.12);{% endif %}">
+
+    <!-- Header -->
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div style="font-size:15px; font-weight:700; color:#1e293b;">{{ r.title }}</div>
+        {% if r.is_active %}
+        <span class="badge badge-purple">● Активное</span>
+        {% endif %}
+        {% if r.keywords %}
+        <span class="badge badge-gray">{{ r.keywords|length }} навыков</span>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:6px; flex-shrink:0;">
+        <form method="post" action="/resumes/{{ r.id }}/activate" style="margin:0;">
+          <button type="submit" class="btn btn-success btn-sm">
+            <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            Активировать
+          </button>
+        </form>
+        <form method="post" action="/resumes/{{ r.id }}/reparse" style="margin:0;">
+          <button type="submit" class="btn btn-secondary btn-sm">
+            <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.17"/></svg>
+            Переспарсить
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Skills -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11.5px; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">Навыки из резюме</div>
+      <div style="display:flex; flex-wrap:wrap; gap:4px;">
+        {% for kw in r.keywords %}
+        <span class="pill pill-default">{{ kw }}</span>
+        {% else %}
+        <span style="font-size:12.5px; color:#cbd5e1;">Не извлечены. Нажмите «Переспарсить».</span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Missing skills -->
+    {% if r.missing_skills %}
+    <div style="margin-bottom:14px; padding:12px; background:#fff5f5; border-radius:10px; border:1px solid #fecaca;">
+      <div style="font-size:11.5px; font-weight:600; color:#dc2626; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px;">
+        Чаще всего не хватает для вакансий
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:4px;">
+        {% for m in r.missing_skills %}
+        <span class="pill pill-red">{{ m.skill }} <span style="opacity:0.6; margin-left:2px;">×{{ m.count }}</span></span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Content details -->
+    <details>
+      <summary style="cursor:pointer; font-size:13px; color:#6366f1; font-weight:500; display:flex; align-items:center; gap:5px; list-style:none; padding:8px 0; border-top:1px solid #f1f5f9; margin-top:4px;">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Посмотреть содержимое резюме
+      </summary>
+
+      <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+
+        {% if r.profile %}
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          {% if r.profile.stack %}
+          <div style="background:#f8fafc; border-radius:10px; padding:12px;">
+            <div style="font-size:11.5px; font-weight:600; color:#94a3b8; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em;">Основной стек</div>
+            <div style="display:flex; flex-wrap:wrap; gap:4px;">
+              {% for s in r.profile.stack %}<span class="pill pill-blue">{{ s }}</span>{% endfor %}
+            </div>
+          </div>
+          {% endif %}
+          {% if r.profile.experience %}
+          <div style="background:#f8fafc; border-radius:10px; padding:12px;">
+            <div style="font-size:11.5px; font-weight:600; color:#94a3b8; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em;">Опыт</div>
+            <ul style="margin:0; padding-left:16px; font-size:12.5px; color:#475569; line-height:1.7;">
+              {% for e in r.profile.experience %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <div>
+          <div style="font-size:11.5px; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Полный текст резюме</div>
+          <pre style="white-space:pre-wrap; font-size:12px; line-height:1.65; color:#475569; background:#f8fafc; padding:14px; border-radius:10px; max-height:400px; overflow-y:auto; font-family:inherit; margin:0;">{{ r.raw_text or 'Текст не сохранён. Нажмите «Переспарсить».' }}</pre>
+        </div>
+      </div>
+    </details>
+
+  </div>
+  {% else %}
+  <div class="card" style="text-align:center; padding:40px; color:#cbd5e1;">
+    <div style="font-size:32px; margin-bottom:10px;">📄</div>
+    <div style="font-size:14px; font-weight:500; margin-bottom:6px;">Резюме не найдены</div>
+    <div style="font-size:13px;">Нажмите «Загрузить с HH.ru» выше</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

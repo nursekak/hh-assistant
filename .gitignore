@@ -1,0 +1,48 @@
+# Секреты и конфиги
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Данные — НЕ коммитим БД и сессию HH
+data/
+*.db
+hh_session.json
+hh_bot.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Playwright
+playwright-report/
+test-results/
+
+# Внутренние файлы разработки
+cursor_plan.md
+
+# Логи
+*.log
+
+# Docker override (локальные переопределения)
+docker-compose.override.yml

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Аналитика — HH Ассистент{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">Аналитика</div>
+    <div class="page-sub">Воронка откликов и статистика совпадений</div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+  <div class="card">
+    <div class="card-title">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+      Воронка откликов
+    </div>
+    <canvas id="funnelChart" height="200"></canvas>
+  </div>
+  <div class="card">
+    <div class="card-title">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      Активность по дням
+    </div>
+    <canvas id="dailyChart" height="200"></canvas>
+  </div>
+  <div class="card">
+    <div class="card-title">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Распределение Match %
+    </div>
+    <canvas id="histChart" height="200"></canvas>
+  </div>
+  <div class="card">
+    <div class="card-title">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Топ пропущенных навыков
+    </div>
+    <canvas id="missingChart" height="200"></canvas>
+    <p style="font-size:11.5px; color:#94a3b8; margin-top:10px; margin-bottom:0;">
+      {% if analytics_data.missing_resume_title %}
+      По резюме «<strong>{{ analytics_data.missing_resume_title }}</strong>». Добавь эти навыки, чтобы увеличить match %.
+      {% else %}
+      Нет активного резюме — показаны данные по всем.
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 18px 12px; font-size:13px; font-weight:600; color:#1e293b; border-bottom:1px solid #f1f5f9;">
+    Конверсия по компаниям
+  </div>
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th>Компания</th>
+        <th>Откликнулся</th>
+        <th>Ответили</th>
+        <th>Конверсия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in analytics_data.companies %}
+      <tr>
+        <td style="font-weight:500;">{{ c.company }}</td>
+        <td>{{ c.applied }}</td>
+        <td>{{ c.responded }}</td>
+        <td>
+          <span class="badge badge-{% if c.rate >= 30 %}green{% elif c.rate >= 10 %}orange{% else %}gray{% endif %}">{{ c.rate }}%</span>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="text-align:center; padding:30px; color:#cbd5e1;">Нет данных</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const data = {{ analytics_data | tojson }};
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.font.size = 12;
+Chart.defaults.color = '#64748b';
+
+new Chart(document.getElementById('funnelChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Найдено', 'Прошло фильтр', 'Показано', 'Откликнулся', 'Ответили'],
+    datasets: [{ label: 'Воронка', data: [data.funnel.found, data.funnel.passed_filter, data.funnel.shown, data.funnel.applied, data.funnel.responded],
+      backgroundColor: ['#c7d2fe','#a5b4fc','#818cf8','#6366f1','#4f46e5'],
+      borderRadius: 6, borderSkipped: false }],
+  },
+  options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } },
+});
+
+new Chart(document.getElementById('dailyChart'), {
+  type: 'line',
+  data: {
+    labels: data.daily.map(d => d.day),
+    datasets: [
+      { label: 'Найдено', data: data.daily.map(d => d.found), borderColor: '#818cf8', backgroundColor: 'rgba(129,140,248,0.08)', fill: true, tension: 0.4, pointRadius: 3 },
+      { label: 'Откликнулся', data: data.daily.map(d => d.applied), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.05)', fill: true, tension: 0.4, pointRadius: 3 },
+      { label: 'Ответили', data: data.daily.map(d => d.responded), borderColor: '#f59e0b', tension: 0.4, pointRadius: 3 },
+    ],
+  },
+  options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 14 } } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } },
+});
+
+new Chart(document.getElementById('histChart'), {
+  type: 'bar',
+  data: {
+    labels: data.histogram.map(h => h.label || (h.bucket * 10 + '%')),
+    datasets: [{ label: 'Вакансий', data: data.histogram.map(h => h.count),
+      backgroundColor: '#a78bfa', borderRadius: 5, borderSkipped: false }],
+  },
+  options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } },
+});
+
+new Chart(document.getElementById('missingChart'), {
+  type: 'bar',
+  data: {
+    labels: data.missing.map(m => m.skill),
+    datasets: [{ label: 'Раз', data: data.missing.map(m => m.count),
+      backgroundColor: '#fca5a5', borderRadius: 4, borderSkipped: false }],
+  },
+  options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, grid: { color: '#f1f5f9' } }, y: { grid: { display: false } } } },
+});
+</script>
+{% endblock %}

@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block title %}Настройки — HH Ассистент{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">Настройки</div>
+    <div class="page-sub">Поиск, матчинг, ИИ-модели и расписание</div>
+  </div>
+</div>
+
+{% if saved %}
+<div class="alert alert-success">
+  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+  Настройки сохранены
+</div>
+{% endif %}
+{% if reset is not none and reset != '' %}
+<div class="alert alert-warn">
+  <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+  Статистика сброшена. Удалено вакансий: <strong>{{ reset }}</strong>
+</div>
+{% endif %}
+
+<form method="post" action="/settings" x-data="{ tab: 'search' }">
+
+  <!-- ── Tab bar ── -->
+  <div class="tab-bar">
+    <button type="button" class="tab-btn" :class="tab==='search'?'tab-active':''" @click="tab='search'">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Поиск HH
+    </button>
+    <button type="button" class="tab-btn" :class="tab==='match'?'tab-active':''" @click="tab='match'">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Матчинг
+    </button>
+    <button type="button" class="tab-btn" :class="tab==='ai'?'tab-active':''" @click="tab='ai'">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      ИИ-модели
+    </button>
+    <button type="button" class="tab-btn" :class="tab==='schedule'?'tab-active':''" @click="tab='schedule'">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Расписание
+    </button>
+  </div>
+
+  <!-- ══ Tab: Поиск HH ══ -->
+  <div x-show="tab==='search'" x-cloak>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Параметры поиска вакансий
+      </div>
+
+      <div class="field">
+        <label>Поисковый запрос</label>
+        <input type="text" name="query" value="{{ query }}" class="input" placeholder="Python developer, Backend engineer…">
+        <div class="field-hint">Запрос передаётся напрямую в поиск HH.ru</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+        <div class="field" style="margin-bottom:0">
+          <label>Регион</label>
+          <select name="region" class="input">
+            <option value="1"   {% if region == "1"   %}selected{% endif %}>Москва</option>
+            <option value="2"   {% if region == "2"   %}selected{% endif %}>Санкт-Петербург</option>
+            <option value="66"  {% if region == "66"  %}selected{% endif %}>Екатеринбург</option>
+            <option value="54"  {% if region == "54"  %}selected{% endif %}>Новосибирск</option>
+            <option value="88"  {% if region == "88"  %}selected{% endif %}>Казань</option>
+            <option value="76"  {% if region == "76"  %}selected{% endif %}>Ростов-на-Дону</option>
+            <option value="113" {% if region == "113" %}selected{% endif %}>Россия (все)</option>
+            <option value="1001" {% if region == "1001" %}selected{% endif %}>СНГ (все)</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Период поиска</label>
+          <select name="period" class="input">
+            <option value="1"  {% if period == 1  %}selected{% endif %}>За сутки</option>
+            <option value="3"  {% if period == 3  %}selected{% endif %}>3 дня</option>
+            <option value="7"  {% if period == 7  %}selected{% endif %}>Неделя</option>
+            <option value="30" {% if period == 30 %}selected{% endif %}>Месяц</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Фильтры вакансий
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px;">
+        <div class="field" style="margin-bottom:0">
+          <label>Формат работы</label>
+          <select name="hh_schedule" class="input">
+            <option value=""        {% if hh_schedule == ""         %}selected{% endif %}>Любой</option>
+            <option value="remote"  {% if hh_schedule == "remote"   %}selected{% endif %}>Удалённо</option>
+            <option value="fullDay" {% if hh_schedule == "fullDay"  %}selected{% endif %}>В офисе (полный день)</option>
+            <option value="hybrid"  {% if hh_schedule == "hybrid"   %}selected{% endif %}>Гибрид</option>
+            <option value="flexible"{% if hh_schedule == "flexible" %}selected{% endif %}>Гибкий график</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Мин. зарплата (руб.)</label>
+          <input type="number" name="salary_from" value="{{ salary_from }}" min="0" step="10000" class="input" placeholder="0 — без фильтра">
+        </div>
+      </div>
+
+      <div class="field" style="margin-bottom:0">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500; font-size:13.5px; color:#374151;">
+          <input type="checkbox" name="only_with_salary" value="on" {% if only_with_salary %}checked{% endif %}
+                 style="width:15px; height:15px; border-radius:4px; accent-color:#6366f1; cursor:pointer;">
+          Показывать только вакансии с указанной зарплатой
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+        Лимиты
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Максимум вакансий за один скан</label>
+        <div class="range-wrap">
+          <input type="range" name="max_vacancies" min="1" max="50" value="{{ max_vacancies }}"
+                 id="maxVacRange" oninput="document.getElementById('maxVacVal').textContent=this.value">
+          <span class="range-val" id="maxVacVal">{{ max_vacancies }}</span>
+        </div>
+        <div class="field-hint">Чем меньше — тем быстрее скан (и меньше риск ограничений HH)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Tab: Матчинг ══ -->
+  <div x-show="tab==='match'" x-cloak>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Порог совпадения
+      </div>
+      <div class="field">
+        <label>Минимальный match для кнопки «Откликнуться»: <span id="thrVal" style="color:#6366f1; font-weight:700;">{{ threshold_pct }}%</span></label>
+        <input type="range" name="threshold_pct" min="0" max="100" value="{{ threshold_pct }}"
+               oninput="document.getElementById('thrVal').textContent=this.value+'%'">
+        <div class="field-hint">
+          Вакансии ниже порога показываются с предупреждением и кнопкой «Откликнуться всё равно».
+          Рекомендуемое значение: 55–70%.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Фильтр по опыту
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500; font-size:13.5px; color:#374151;">
+          <input type="checkbox" name="experience_filter" value="on" {% if experience_filter %}checked{% endif %}
+                 style="width:15px; height:15px; border-radius:4px; accent-color:#6366f1; cursor:pointer;">
+          Автоматически пропускать вакансии с завышенным требованием стажа
+        </label>
+        <div class="field-hint">
+          Такие вакансии не сохраняются в статистику и не отправляются в Telegram.
+          Стаж берётся из структурированного поля HH.ru и сравнивается с опытом активного резюме.
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Допуск по стажу: <span id="tolVal" style="color:#6366f1; font-weight:700;">{{ experience_tolerance }} лет</span></label>
+        <input type="range" name="experience_tolerance" min="0" max="2" step="0.25" value="{{ experience_tolerance }}"
+               oninput="document.getElementById('tolVal').textContent=this.value+' лет'">
+        <div class="field-hint">
+          Например: допуск 0.5 — при стаже резюме 2.25 года вакансии с требованием «до 2.75» пройдут.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Tab: ИИ-модели ══ -->
+  <div x-show="tab==='ai'" x-cloak>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        Ollama (локальная LLM)
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Модель для анализа вакансий и сопроводительных писем</label>
+        <input type="text" name="ollama_model" value="{{ ollama_model }}" class="input" placeholder="qwen2.5:7b">
+        <div class="field-hint">Убедись, что модель уже загружена: <code style="font-size:11px; background:#f1f5f9; padding:1px 5px; border-radius:4px;">ollama pull {{ ollama_model }}</code></div>
+      </div>
+    </div>
+
+    <div class="card" x-data="{ backend: '{{ cover_letter_backend }}' }">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Сопроводительные письма
+      </div>
+
+      <div class="field">
+        <label>Генерировать письма через</label>
+        <div style="display:flex; gap:10px; margin-top:6px;">
+          <label style="display:flex; align-items:center; gap:8px; padding:10px 16px; border:1.5px solid; border-radius:10px; cursor:pointer; flex:1; transition:all 0.15s;"
+                 :style="backend==='ollama' ? 'border-color:#818cf8; background:#ede9fe;' : 'border-color:#dde3ec; background:#fafbfd;'"
+                 @click="backend='ollama'">
+            <input type="radio" name="cover_letter_backend" value="ollama" :checked="backend==='ollama'" style="accent-color:#6366f1;">
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#1e293b;">Ollama (локально)</div>
+              <div style="font-size:11px; color:#94a3b8;">Бесплатно, работает офлайн</div>
+            </div>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; padding:10px 16px; border:1.5px solid; border-radius:10px; cursor:pointer; flex:1; transition:all 0.15s;"
+                 :style="backend==='claude' ? 'border-color:#818cf8; background:#ede9fe;' : 'border-color:#dde3ec; background:#fafbfd;'"
+                 @click="backend='claude'">
+            <input type="radio" name="cover_letter_backend" value="claude" :checked="backend==='claude'" style="accent-color:#6366f1;">
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#1e293b;">Claude API</div>
+              <div style="font-size:11px; color:#94a3b8;">Высокое качество, требует ключ</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div x-show="backend==='claude'" style="border-top:1px solid #f1f5f9; padding-top:16px; margin-top:4px;">
+        <div class="field">
+          <label>Anthropic API Key</label>
+          <input type="password" name="anthropic_api_key" value="{{ anthropic_api_key }}" class="input" placeholder="sk-ant-…"
+                 autocomplete="off">
+          <div class="field-hint">Ключ сохраняется в локальной БД, не передаётся никуда кроме api.anthropic.com</div>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Модель Claude</label>
+          <input type="text" name="anthropic_model" value="{{ anthropic_model }}" class="input" placeholder="claude-sonnet-4-20250514">
+        </div>
+      </div>
+
+      <!-- hidden fallback for claude fields when ollama selected -->
+      <div x-show="backend!=='claude'" style="display:none">
+        <input type="hidden" name="anthropic_api_key" value="">
+        <input type="hidden" name="anthropic_model" value="">
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Tab: Расписание ══ -->
+  <div x-show="tab==='schedule'" x-cloak>
+    <div class="card">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Автоматическое сканирование
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Интервал между сканами: <span id="intVal" style="color:#6366f1; font-weight:700;">{{ interval }} ч</span></label>
+        <div class="range-wrap" style="margin-top:10px;">
+          <input type="range" name="interval" min="1" max="24" value="{{ interval }}"
+                 oninput="document.getElementById('intVal').textContent=this.value+' ч'">
+          <span class="range-val" style="min-width:36px;">{{ interval }}</span>
+        </div>
+        <div class="field-hint">
+          Изменение применяется сразу — планировщик перезапускается без рестарта бота.
+          Для ручного скана: дашборд → «Запустить скан».
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Save button ── -->
+  <div style="margin-top:20px; display:flex; gap:10px;">
+    <button type="submit" class="btn btn-primary">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+      Сохранить настройки
+    </button>
+  </div>
+</form>
+
+<!-- ── Danger zone ── -->
+<div class="card" style="margin-top:24px; border-color:#fecaca;">
+  <div class="card-title" style="color:#dc2626;">
+    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    Опасная зона
+  </div>
+  <p style="font-size:13px; color:#6b7280; margin-bottom:14px; line-height:1.6;">
+    Сброс удалит все вакансии и аналитику (воронка, графики, пропущенные навыки).
+    Резюме и настройки сохранятся. Отменить нельзя.
+  </p>
+  <form method="post" action="/settings/reset"
+        onsubmit="return confirm('Точно сбросить всю статистику? Это удалит все вакансии и аналитику.');">
+    <button type="submit" class="btn btn-danger">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+      Сбросить статистику
+    </button>
+  </form>
+</div>
+
+<style>[x-cloak]{display:none!important}</style>
+{% endblock %}

@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.env
+data/
+*.db
+hh_session.json
+hh_bot.db
+cursor_plan.md
+*.md
+!README.md

@@ -1,0 +1,35 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: hh-bot-ollama
+    volumes:
+      # Модель (~5 ГБ) хранится на D: вместо системного диска.
+      # Поменяй путь слева на любой диск/папку с местом.
+      - ${OLLAMA_DATA_DIR:-D:/docker-data/ollama}:/root/.ollama
+    restart: unless-stopped
+    # Раскомментируй для GPU (NVIDIA):
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  bot:
+    build: .
+    container_name: hh-bot
+    depends_on:
+      - ollama
+    env_file: .env
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      DB_PATH: data/hh_bot.db
+      SESSION_FILE: data/hh_session.json
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8080"
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
