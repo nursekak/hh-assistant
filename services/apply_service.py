@@ -64,6 +64,9 @@ class ApplyService:
         await self.vacancy_repo.update_status(vacancy_id, "skipped")
 
     async def submit_application(self, vacancy_id: str, with_letter: bool = True) -> bool:
+        if str(vacancy_id).startswith("tg:"):
+            log.warning("Авто-отклик недоступен для Telegram-вакансий: %s", vacancy_id)
+            return False
         vacancy = await self.vacancy_repo.get(vacancy_id)
         cover = ""
         if with_letter and vacancy:

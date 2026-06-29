@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import config
+import tg_client
 from repositories import SettingsRepository, VacancyRepository
 
 
@@ -36,6 +37,13 @@ class SettingsView:
     candidate_name: str
     # Scheduler
     interval: int
+    # Telegram channels
+    tg_scan_enabled: bool
+    tg_channels_folder: str
+    tg_lookback_hours: int
+    tg_max_messages_per_channel: int
+    tg_session_ok: bool
+    tg_credentials_ok: bool
 
 
 class SettingsService:
@@ -90,6 +98,15 @@ class SettingsService:
 
         interval = await self._get_int("scan_interval_hours", config.SCAN_INTERVAL_HOURS)
 
+        tg_scan_enabled = await self._get_bool("tg_scan_enabled", config.TG_SCAN_ENABLED)
+        tg_channels_folder = await self.settings_repo.get(
+            "tg_channels_folder", config.TG_CHANNELS_FOLDER
+        )
+        tg_lookback_hours = await self._get_int("tg_lookback_hours", config.TG_LOOKBACK_HOURS)
+        tg_max_messages_per_channel = await self._get_int(
+            "tg_max_messages_per_channel", config.TG_MAX_MESSAGES_PER_CHANNEL
+        )
+
         return SettingsView(
             query=query,
             region=region,
@@ -110,6 +127,12 @@ class SettingsService:
             anthropic_model=anthropic_model,
             candidate_name=candidate_name,
             interval=interval,
+            tg_scan_enabled=tg_scan_enabled,
+            tg_channels_folder=tg_channels_folder,
+            tg_lookback_hours=tg_lookback_hours,
+            tg_max_messages_per_channel=tg_max_messages_per_channel,
+            tg_session_ok=tg_client.has_session(),
+            tg_credentials_ok=tg_client.has_credentials(),
         )
 
     async def save(self, form: dict[str, object]) -> int:
@@ -136,6 +159,14 @@ class SettingsService:
             "notify_below_threshold": "on" if form.get("notify_below_threshold") else "off",
             "experience_filter": "on" if form.get("experience_filter") else "off",
             "scan_interval_hours": str(interval),
+            "tg_scan_enabled": "on" if form.get("tg_scan_enabled") else "off",
+            "tg_channels_folder": str(form.get("tg_channels_folder", "")).strip(),
+            "tg_lookback_hours": str(
+                max(1, min(int(form.get("tg_lookback_hours", config.TG_LOOKBACK_HOURS)), 168))
+            ),
+            "tg_max_messages_per_channel": str(
+                max(1, min(int(form.get("tg_max_messages_per_channel", 30)), 200))
+            ),
         }
 
         try:
@@ -174,6 +205,13 @@ class SettingsService:
 
     async def reset_statistics(self) -> int:
         return await self.vacancy_repo.reset_statistics()
+
+    async def list_tg_folders(self) -> list[dict[str, object]]:
+        try:
+            rows = await tg_client.list_folders()
+            return [{"title": title, "channels_count": count} for title, count in rows]
+        except Exception as exc:
+            return [{"error": str(exc)}]
 
     @staticmethod
     def _clean_experience_years(value: object) -> str:

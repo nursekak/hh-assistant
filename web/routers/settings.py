@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from services import SettingsService
@@ -44,6 +44,13 @@ async def settings_page(request: Request):
             "candidate_name": view.candidate_name,
             # Расписание
             "interval": view.interval,
+            # Telegram
+            "tg_scan_enabled": view.tg_scan_enabled,
+            "tg_channels_folder": view.tg_channels_folder,
+            "tg_lookback_hours": view.tg_lookback_hours,
+            "tg_max_messages_per_channel": view.tg_max_messages_per_channel,
+            "tg_session_ok": view.tg_session_ok,
+            "tg_credentials_ok": view.tg_credentials_ok,
             # Flash
             "saved": request.query_params.get("saved") == "1",
             "reset": request.query_params.get("reset"),
@@ -76,6 +83,11 @@ async def settings_save(
     candidate_name: str = Form(""),
     # Расписание
     interval: int = Form(2),
+    # Telegram
+    tg_scan_enabled: str = Form(""),
+    tg_channels_folder: str = Form(""),
+    tg_lookback_hours: int = Form(24),
+    tg_max_messages_per_channel: int = Form(30),
 ):
     interval = await settings_service.save({
         "query": query,
@@ -97,6 +109,10 @@ async def settings_save(
         "anthropic_model": anthropic_model,
         "candidate_name": candidate_name,
         "interval": interval,
+        "tg_scan_enabled": tg_scan_enabled,
+        "tg_channels_folder": tg_channels_folder,
+        "tg_lookback_hours": tg_lookback_hours,
+        "tg_max_messages_per_channel": tg_max_messages_per_channel,
     })
     try:
         import bot
@@ -105,6 +121,11 @@ async def settings_save(
         pass
 
     return RedirectResponse("/settings?saved=1", status_code=303)
+
+
+@router.get("/api/settings/tg-folders")
+async def tg_folders_api():
+    return JSONResponse(await settings_service.list_tg_folders())
 
 
 @router.post("/settings/reset")

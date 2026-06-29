@@ -42,6 +42,10 @@
       <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Расписание
     </button>
+    <button type="button" class="tab-btn" :class="tab==='telegram'?'tab-active':''" @click="tab='telegram'">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+      Telegram-каналы
+    </button>
   </div>
 
   <!-- ══ Tab: Поиск HH ══ -->
@@ -303,6 +307,80 @@
           Для ручного скана: дашборд → «Запустить скан».
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ══ Tab: Telegram-каналы ══ -->
+  <div x-show="tab==='telegram'" x-cloak x-data="{ folders: [], foldersLoading: false, foldersError: '' }">
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-title">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        Сканирование Telegram-каналов
+      </div>
+
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+          <input type="checkbox" name="tg_scan_enabled" value="on" {% if tg_scan_enabled %}checked{% endif %}>
+          <span>Включить чтение каналов из папки Telegram</span>
+        </label>
+        <div class="field-hint">
+          Каналы читаются через личный аккаунт (Telethon), параллельно с HH в одном скане.
+          API_ID/API_HASH — в <code>.env</code>; логин: <code>python tg_login.py</code>.
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px;">
+        <div class="field" style="margin-bottom:0">
+          <label>Папка в Telegram</label>
+          <input type="text" name="tg_channels_folder" value="{{ tg_channels_folder }}" class="input"
+                 placeholder="Например: Вакансии">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Глубина (часов назад)</label>
+          <input type="number" name="tg_lookback_hours" value="{{ tg_lookback_hours }}"
+                 min="1" max="168" class="input">
+        </div>
+      </div>
+
+      <div class="field" style="margin-bottom:16px;">
+        <label>Макс. сообщений на канал за скан</label>
+        <input type="number" name="tg_max_messages_per_channel" value="{{ tg_max_messages_per_channel }}"
+               min="1" max="200" class="input" style="max-width:200px;">
+      </div>
+
+      <div style="font-size:13px; margin-bottom:14px; line-height:1.6;">
+        <strong>Статус сессии:</strong>
+        {% if tg_credentials_ok and tg_session_ok %}
+          <span style="color:#16a34a;">✅ API и user-session настроены</span>
+        {% elif tg_credentials_ok %}
+          <span style="color:#d97706;">⚠️ API задан, но нет сессии — выполните <code>tg_login.py</code></span>
+        {% else %}
+          <span style="color:#dc2626;">❌ Задайте TELEGRAM_API_ID и TELEGRAM_API_HASH в .env</span>
+        {% endif %}
+      </div>
+
+      <button type="button" class="btn btn-secondary"
+              @click="
+                foldersLoading = true; foldersError = ''; folders = [];
+                fetch('/api/settings/tg-folders')
+                  .then(r => r.json())
+                  .then(data => {
+                    foldersLoading = false;
+                    if (data.length === 1 && data[0].error) { foldersError = data[0].error; }
+                    else { folders = data; }
+                  })
+                  .catch(e => { foldersLoading = false; foldersError = e.message; });
+              ">
+        Показать папки Telegram
+      </button>
+
+      <div x-show="foldersLoading" style="margin-top:12px; font-size:13px; color:#64748b;">Загрузка…</div>
+      <div x-show="foldersError" style="margin-top:12px; font-size:13px; color:#dc2626;" x-text="foldersError"></div>
+      <ul x-show="folders.length" style="margin-top:12px; font-size:13px; padding-left:20px;">
+        <template x-for="f in folders" :key="f.title">
+          <li><span x-text="f.title"></span> — <span x-text="f.channels_count"></span> чат(ов)</li>
+        </template>
+      </ul>
     </div>
   </div>
 
