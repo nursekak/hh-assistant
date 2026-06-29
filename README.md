@@ -1,3 +1,295 @@
+<b>English</b> · <a href="#hh-ассистент">Русский</a>
+
+# HH Assistant
+
+**Automated HH.ru job-application system with an LLM pipeline and semantic resume matching.**
+
+Telegram bot + web dashboard: finds matching vacancies, compares them with your resume via embeddings, generates personalized cover letters, and applies — all automatically.
+
+---
+
+## Architecture
+
+Layered architecture with clear separation of concerns: thin entry points (Telegram/Web) → services (business logic) → repositories (data access) → `storage`. The heavy pipeline runs in a dedicated worker process via a Redis queue.
+
+```
+   Telegram Bot (aiogram)        Web Dashboard (FastAPI + Alpine.js)
+   Cards / Apply / Scan          Settings / Analytics / Resumes / Live
+        └──────────────┬───────────────────┬──────────────┘
+                       ▼                    ▼
+              ┌───────────────────────────────────────┐
+              │  Services (business logic)             │
+              │  Scan · Apply · Resume · Response ·    │
+              │  Settings · Analytics · Dashboard      │
+              └───────────────────┬───────────────────┘
+                                  ▼
+              ┌───────────────────────────────────────┐
+              │  Repositories (data access)            │
+              │  Vacancy · Resume · ResumeVersion ·    │
+              │  ScanJob · Settings · Analytics        │
+              └───────────────────┬───────────────────┘
+                                  ▼
+                          storage.py (aiosqlite)
+
+   Enqueue a scan                       ┌──────────────────────────┐
+   bot/web ── enqueue ──► Redis (ARQ) ──►│  Worker (separate process)│
+                                         │  scan / responses / reparse│
+                                         └─────────────┬──────────────┘
+                                                       ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  HH.ru (Playwright stealth)  →  LLM pipeline (Ollama)         │
+   │  Search/parse                →  Extractor · Matcher (bge-m3)  │
+   │                              →  Cover Letter (Ollama/Claude)  │
+   └──────────────────────────────────────────────────────────────┘
+```
+
+> If `REDIS_URL` is not set, tasks run inline inside the bot process (graceful fallback) — a separate worker is not required for local runs.
+
+---
+
+## Features
+
+### Search and filtering
+- Playwright automation of HH.ru with anti-bot evasion (stealth JS, cookie session, random delays)
+- **Full results scrolling**: the page is smoothly scrolled to the very bottom to load **all** lazily-rendered cards (up to 50 per page), not just the visible part
+- **Pagination**: the bot pages through search results and collects the configured number of **unique new** vacancies (not seen before), instead of just cards from the first page
+- Filters built right into the HH query: region, period, work format (remote / office / hybrid), employment type, minimum salary
+- **HH-side experience filter**: the candidate's seniority (from settings or auto-derived from the resume) is mapped to HH categories (`2 years → "1–3 years"`) to filter out fewer suitable vacancies
+- Automatic skipping of vacancies with overly high required seniority — **before** the expensive LLM analysis
+- **Telegram delivery threshold**: vacancies below the match threshold can be stored only in the DB (without a Telegram card and without an LLM summary)
+
+### Visual scan preview
+- A **"Parsing"** section in the dashboard: full-page **screenshots of each search page** + a table of found cards marked 🟢 new / 🟠 already in DB
+- **Live mode**: while a scan is running the page refreshes live — you can see the parser walking through pages in real time
+- **Completeness diagnostics**: shows how many vacancies **HH reported** vs. the number **parsed** — instantly reveals whether everything was loaded and why so many new ones were found
+- Artifacts are stored in the shared volume `data/scan_debug/<job_id>/` (last N runs are kept)
+
+### LLM resume ↔ vacancy matching
+- Structured requirement extraction via Ollama (`qwen2.5:7b`) into JSON
+- **Hybrid matching**: exact skill intersection + semantic similarity via embeddings (`bge-m3`, NumPy cosine similarity)
+- Configurable match threshold; vacancies below it are shown with a warning
+- TF-IDF fallback if embeddings are unavailable
+
+### Cover letter generation
+- Personalized letters via Ollama or the Claude API
+- Signed with the candidate's name (`candidate_name` in settings), no placeholders like "[Your name]"
+- Preview, edit, and confirm before sending in Telegram
+- Automatic filling of the HH.ru application form
+
+### Resume versioning
+- Every change to the resume text is stored as an **immutable version** (`resume_versions`)
+- `sha256` deduplication: re-parsing identical text does not spawn a new version
+- Version history in the web UI and **rollback** to any previous version in one click
+- The `resumes` table stays the current snapshot — matching and letters work unchanged
+
+### Security
+- The `sanitizer.py` module detects and neutralizes **prompt injection** in vacancy texts (15+ patterns: jailbreak, DAN, system tags, RU/EN attacks)
+- Secrets are never stored in code — only in `.env`
+
+### Web dashboard (port 8080)
+- **Dashboard**: live scan monitoring with logs, application stats
+- **Settings**: 4 sections (search, matching, AI models, schedule) — applied without restart
+- **Resumes**: management, full text and skills view, top missing skills
+- **Vacancies**: history with Match %, matched/missing skills, and letters
+- **Analytics**: funnel, activity by day, Match % histogram, top missing skills (Chart.js)
+- **Parsing**: search-page screenshots and the list of found cards with live updates during a scan
+
+### Background tasks and state
+- **ARQ + Redis task queue**: scanning, response checking, and resume re-parsing run in a separate worker process — the heavy Playwright/LLM pipeline doesn't block Telegram
+- **Job Manager**: scan state is stored in the DB (`scan_jobs`) with an explicit phase state machine (`queued → searching → matching → finalizing → done/error`), survives restarts, supports retries and timeouts
+- **Hybrid lock** (`distributed_lock.py`): browser/session access is serialized between the bot and the worker via a distributed Redis lock (degrades to `asyncio.Lock` without Redis)
+- **Graceful fallback**: without `REDIS_URL` tasks run inline inside the bot process
+
+### Infrastructure
+- Full containerization (Docker Compose): `bot` + `worker` + `ollama` + `redis` services
+- `entrypoint.sh` automatically pulls the LLM and embedding models on startup
+- APScheduler with dynamic scan-interval changes without restart
+- Unit tests (pytest): sanitizer, extractor, matcher, cookies, scan state, experience filter, resume versioning, pagination, HH filter URL building
+
+---
+
+## Stack
+
+| Category | Technologies |
+|---|---|
+| Telegram | `aiogram 3.x`, FSM |
+| Web backend | `FastAPI`, `Jinja2` |
+| Web frontend | `Alpine.js`, `Tailwind CSS`, `Chart.js` |
+| Automation | `Playwright` (stealth mode) |
+| LLM / Embeddings | `Ollama`, `bge-m3`, `qwen2.5` |
+| ML / matching | `NumPy`, `scikit-learn` (TF-IDF fallback) |
+| Database | `aiosqlite` (SQLite) |
+| Task queue | `ARQ`, `Redis` |
+| Scheduler | `APScheduler` |
+| AI API | `Anthropic Claude API` (optional) |
+| Containers | `Docker`, `Docker Compose` |
+| Tests | `pytest`, `pytest-asyncio` |
+
+---
+
+## Quick start
+
+### Requirements
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — the only dependency
+- A Telegram bot (create one via [@BotFather](https://t.me/botfather))
+- An HH.ru account
+
+### 1. Setup
+
+```bash
+git clone https://github.com/<username>/hh-assistant.git
+cd hh-assistant
+cp .env.example .env
+```
+
+Fill in `.env`:
+
+```env
+TELEGRAM_TOKEN=...         # from @BotFather
+ALLOWED_USER_ID=...        # from @userinfobot
+OLLAMA_MODEL=qwen2.5:7b    # qwen2.5:3b if low on RAM
+CANDIDATE_NAME=Gleb        # name used to sign cover letters
+# REDIS_URL is set automatically in docker-compose (redis://redis:6379).
+# Leave empty for a local run without a worker — tasks will run inline.
+```
+
+### 2. Run
+
+```bash
+docker compose up -d --build
+```
+
+On the first run Ollama downloads the models (~5–6 GB). This may take 10–30 minutes.
+
+Logs:
+```bash
+docker compose logs -f bot     # Telegram + web
+docker compose logs -f worker  # background tasks (scan, applications)
+```
+
+### 3. First steps
+
+1. Open the Telegram bot → `/login` — authorize via phone number
+2. `/resumes` — load resumes from HH.ru and pick the active one
+3. Web UI: [http://localhost:8080](http://localhost:8080) → Settings → set the search query
+4. Click "Run scan" or wait for the automatic run
+
+---
+
+## Resource requirements
+
+| Model | RAM | Quality | Speed (CPU) |
+|---|---|---|---|
+| `qwen2.5:3b` | ~4 GB | Good | ~30 sec/vacancy |
+| `qwen2.5:7b` | ~8 GB | Excellent | ~60 sec/vacancy |
+| `qwen2.5:14b` | ~16 GB | Superb | ~2 min/vacancy |
+
+In Docker Desktop: **Settings → Resources → Memory** — allocate enough.
+
+---
+
+## Bot commands
+
+Available via the native Telegram menu (the "Menu" button / `/`) and via a persistent keyboard with quick-action buttons (shown after `/start` or `/menu`).
+
+| Command | Description |
+|---|---|
+| `/start`, `/menu` | Show the menu and the quick-action keyboard |
+| `/login` | Log in to HH.ru via SMS |
+| `/import` | Import cookies (recommended login method) |
+| `/search Python Backend` | Set the search query |
+| `/resumes` | Manage resumes |
+| `/scan` | Run a scan immediately |
+| `/status` | Status and statistics |
+| `/threshold 65` | Set the match threshold (%) |
+
+---
+
+## Project structure
+
+```
+hh-assistant/
+├── bot.py              # Entry point: Telegram + APScheduler + FastAPI
+├── worker.py           # ARQ WorkerSettings + tasks (scan/responses/reparse)
+├── worker_main.py      # Worker launcher (works around uvloop in the arq CLI)
+├── scraper.py          # Playwright automation of HH.ru
+├── extractor.py        # LLM profile extraction (JSON) from texts
+├── matcher.py          # Hybrid matching (exact + semantic)
+├── embeddings.py       # bge-m3 embeddings via the Ollama API
+├── experience.py       # Parsing and comparing seniority
+├── hh_filters.py       # Building the HH search URL (experience/format/employment)
+├── pagination.py       # Page-by-page collection of unique new vacancies
+├── letter.py           # Cover letter generation
+├── sanitizer.py        # Prompt-injection protection
+├── llm.py              # Ollama API (vacancy analysis)
+├── storage.py          # aiosqlite: vacancies, resumes, versions, settings, scan_jobs
+├── scan_state.py       # /api/scan/status response model (data in scan_jobs)
+├── scan_phases.py      # Scan phase state machine
+├── scan_debug.py       # Visual debugging: search screenshots + card manifest
+├── distributed_lock.py # Hybrid lock (asyncio + Redis) for browser/session
+├── config.py           # Configuration from .env
+├── services/           # Business logic (scan, apply, resume, response, …)
+│   └── job_queue.py    # ARQ enqueue + inline fallback
+├── repositories/       # Data access (vacancy, resume, resume_version, scan_job, …)
+├── web/
+│   ├── app.py          # FastAPI app and /api/scan/*
+│   ├── routers/        # settings, resumes, analytics, scan_debug (Parsing)
+│   └── templates/      # Jinja2 + Tailwind
+├── tests/              # pytest unit tests
+├── Dockerfile
+├── docker-compose.yml  # bot + worker + ollama + redis
+├── entrypoint.sh       # Auto-pull of Ollama models
+└── .env.example
+```
+
+---
+
+## Roadmap
+
+Legend: ✅ done · 🔜 planned · 💡 idea under consideration.
+
+### Done ✅
+- Layered architecture (services / repositories / storage)
+- Background worker on ARQ + Redis, Job Manager with a state machine, hybrid lock
+- Resume versioning with rollback
+- Personalized cover letters (Ollama / Claude)
+- Pagination and collection of **unique new** vacancies
+- HH filters by experience / work format / employment type (with seniority mapping)
+- Full results scrolling (loading all cards)
+- Visual scan preview with screenshots and live mode
+- Buttons and a native command menu in Telegram
+
+### Multi-service parsing 🔜
+The main direction is to make the system **not tied to HH.ru** and parse several platforms (HH, **LinkedIn**, and optionally other job boards).
+
+- **Provider abstraction** (`providers/`): a single `VacancyProvider` interface with `search()`, `fetch_details()`, `apply()`. HH.ru becomes the first implementation (`HHProvider`); the current `scraper.py` moves under this interface without changing the matching/letters pipeline.
+- **LinkedIn provider** (`LinkedInProvider`): search and parse LinkedIn vacancies (via a cookie-based Playwright session, like HH). Vacancy fields are normalized into a shared `VacancyData` so matching/letters work the same across platforms.
+- **Platform selection in settings**: "HH.ru", "LinkedIn" checkboxes — a scan runs across all enabled providers and merges results into a single feed (with deduplication by company + title across platforms).
+- **Provider-specific filters**: a shared settings layer (experience, format, period) is translated into each platform's parameters (`hh_filters.py` → a similar `linkedin_filters.py`).
+
+### "Remote Worldwide" search mode 🔜
+A dedicated mode for worldwide remote search with a target number of vacancies:
+
+- A **"Remote Worldwide"** toggle in settings/search: when enabled, providers search specifically for remote vacancies without a region (HH: `schedule=remote` without `area`; LinkedIn: `Remote` + worldwide geo).
+- A **"How many vacancies to collect"** field (`N`) — the target number of unique new vacancies; pagination pages through as many results as needed to reach `N` (within the `SCAN_MAX_PAGES` safety cap).
+- Out-of-the-box scenario: *"find N vacancies that are remote worldwide"* — with a single toggle, without manually configuring region and format per platform.
+
+### Further 💡
+- Extended per-platform analytics (where the best matches come from)
+- A queue of application drafts with manual batch confirmation
+- Export of found vacancies (CSV / JSON)
+- Notifications about new employer replies from different platforms in one stream
+
+---
+
+## License
+
+MIT
+
+---
+
+<a href="#hh-assistant">English</a> · <b>Русский</b>
+
 # HH Ассистент
 
 **Система автоматизации отклика на вакансии HH.ru с LLM-пайплайном и семантическим матчингом резюме.**
