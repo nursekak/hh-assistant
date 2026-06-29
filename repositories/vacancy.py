@@ -57,6 +57,7 @@ class VacancyRepository:
         cover_letter: str = "",
         scan_query: str = "",
         resume_id: str = "",
+        source: str = "hh",
     ) -> None:
         await storage.save_vacancy(
             vacancy_id=vacancy_id,
@@ -74,4 +75,5 @@ class VacancyRepository:
             cover_letter=cover_letter,
             scan_query=scan_query,
             resume_id=resume_id,
+            source=source,
         )

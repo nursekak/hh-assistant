@@ -83,6 +83,7 @@ async def init_db() -> None:
             ("response_at", "TIMESTAMP"),
             ("scan_query", "TEXT DEFAULT ''"),
             ("resume_id", "TEXT DEFAULT ''"),
+            ("source", "TEXT DEFAULT 'hh'"),
         ]:
             await _ensure_column(db, "vacancies", col, defn)
         await _ensure_column(db, "resumes", "profile_json", "TEXT DEFAULT ''")
@@ -137,6 +138,7 @@ async def save_vacancy(
     cover_letter: str = "",
     scan_query: str = "",
     resume_id: str = "",
+    source: str = "hh",
 ) -> None:
     matched_json = json.dumps(matched_skills or [], ensure_ascii=False)
     missing_json = json.dumps(missing_skills or [], ensure_ascii=False)
@@ -146,12 +148,12 @@ async def save_vacancy(
             """INSERT OR IGNORE INTO vacancies
                (id, title, company, url, salary, summary, status,
                 match_score, matched_skills, missing_skills, extra_skills,
-                profile_json, cover_letter, scan_query, resume_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                profile_json, cover_letter, scan_query, resume_id, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 vacancy_id, title, company, url, salary, summary, status,
                 match_score, matched_json, missing_json, extra_json,
-                profile_json, cover_letter, scan_query, resume_id,
+                profile_json, cover_letter, scan_query, resume_id, source,
             ),
         )
         await db.commit()

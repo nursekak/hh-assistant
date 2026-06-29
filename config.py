@@ -57,3 +57,13 @@ COVER_LETTER_BACKEND = os.getenv("COVER_LETTER_BACKEND", "ollama").lower()
 CANDIDATE_NAME       = os.getenv("CANDIDATE_NAME", "")
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL      = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+# Telegram user-client (Telethon): чтение вакансий из каналов в папке.
+# API_ID/API_HASH — с https://my.telegram.org (не путать с TELEGRAM_TOKEN бота).
+TG_SCAN_ENABLED      = os.getenv("TG_SCAN_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+TELEGRAM_API_ID      = int(os.getenv("TELEGRAM_API_ID", "0") or "0")
+TELEGRAM_API_HASH    = os.getenv("TELEGRAM_API_HASH", "")
+TG_USER_SESSION      = os.getenv("TG_USER_SESSION", "data/tg_user")
+TG_CHANNELS_FOLDER   = os.getenv("TG_CHANNELS_FOLDER", "")
+TG_LOOKBACK_HOURS    = int(os.getenv("TG_LOOKBACK_HOURS", "24"))
+TG_MAX_MESSAGES_PER_CHANNEL = int(os.getenv("TG_MAX_MESSAGES_PER_CHANNEL", "30"))

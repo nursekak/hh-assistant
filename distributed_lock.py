@@ -60,3 +60,14 @@ class HybridLock:
                 pass
             self._active_rlock = None
         self._local.release()
+
+    async def acquire(self) -> "HybridLock":
+        """Ручной захват (для многошаговых сценариев, напр. интерактивный логин)."""
+        return await self.__aenter__()
+
+    async def release(self) -> None:
+        """Ручное освобождение, парное к acquire()."""
+        await self.__aexit__()
+
+    def locked(self) -> bool:
+        return self._local.locked()

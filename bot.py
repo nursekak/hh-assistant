@@ -45,6 +45,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import config
 import storage
 import scraper
+import tg_client
 from services import (
     ApplyService,
     DashboardService,
@@ -55,7 +56,7 @@ from services import (
     ScanService,
     SettingsService,
 )
-from services.telegram_ui import build_letter_preview_keyboard, esc
+from services.telegram_ui import build_letter_preview_keyboard, build_tg_letter_keyboard, esc
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +120,12 @@ class ApplyFlow(StatesGroup):
     waiting_for_letter_edit = State()
 
 
+class TgLoginFlow(StatesGroup):
+    waiting_for_phone    = State()
+    waiting_for_code     = State()
+    waiting_for_password = State()
+
+
 LOGIN_SESSION_TTL_SEC = 600
 
 
@@ -153,6 +160,39 @@ async def _cleanup_stale_logins() -> None:
     for uid in list(_pending_logins):
         if now - _pending_logins[uid].created_at > LOGIN_SESSION_TTL_SEC:
             await _close_pending_login(uid)
+
+
+# ── Интерактивный логин в Telegram (телефон → код → 2FA) ────────────────────
+
+@dataclass
+class PendingTgLogin:
+    client: Any
+    phone: str
+    phone_code_hash: str
+    created_at: float
+    lock_held: bool = False
+
+
+_pending_tg_logins: dict[int, PendingTgLogin] = {}
+
+
+async def _close_pending_tg_login(user_id: int) -> None:
+    session = _pending_tg_logins.pop(user_id, None)
+    if not session:
+        return
+    try:
+        await session.client.disconnect()
+    except Exception:
+        pass
+    if session.lock_held:
+        try:
+            await tg_client.TG_USER_LOCK.release()
+        except Exception:
+            pass
+
+
+def _digits_only(text: str) -> str:
+    return "".join(ch for ch in (text or "") if ch.isdigit())
 
 
 # ──────────────────────────── Auth guard ───────────────────────────────────
@@ -211,6 +251,7 @@ BTN_RESUMES   = "📄 Резюме"
 BTN_THRESHOLD = "🎯 Порог"
 BTN_SEARCH    = "🔎 Запрос"
 BTN_IMPORT    = "🔐 Вход"
+BTN_TG        = "📡 Подключить TG"
 BTN_HELP      = "ℹ️ Меню"
 
 # Список команд для нативного меню Telegram (кнопка «Menu» / «/»).
@@ -222,6 +263,7 @@ BOT_COMMANDS = [
     BotCommand(command="search",    description="🔎 Поисковый запрос"),
     BotCommand(command="import",    description="🔐 Вход через cookies"),
     BotCommand(command="login",     description="📱 Вход по SMS"),
+    BotCommand(command="tg_login",  description="📡 Подключить Telegram-каналы"),
     BotCommand(command="menu",      description="ℹ️ Показать меню"),
 ]
 
@@ -233,6 +275,7 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_SCAN), KeyboardButton(text=BTN_STATUS)],
             [KeyboardButton(text=BTN_RESUMES), KeyboardButton(text=BTN_THRESHOLD)],
             [KeyboardButton(text=BTN_SEARCH), KeyboardButton(text=BTN_IMPORT)],
+            [KeyboardButton(text=BTN_TG)],
             [KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
@@ -257,7 +300,8 @@ async def cmd_start(msg: Message) -> None:
         "/scan — сканировать вакансии прямо сейчас\n"
         "/status — статистика\n"
         "/resumes — выбрать резюме для откликов\n"
-        "/threshold — порог совпадения (match %)\n\n"
+        "/threshold — порог совпадения (match %)\n"
+        "/tg_login — подключить Telegram-каналы как источник\n\n"
         f"⏱ Автосканирование каждые {config.SCAN_INTERVAL_HOURS} ч.",
         parse_mode="HTML",
         reply_markup=main_menu_kb(),
@@ -358,6 +402,172 @@ async def login_otp_received(msg: Message, state: FSMContext) -> None:
             "❌ Не удалось войти по SMS (HH.ru часто показывает капчу).\n"
             "Используй надёжный способ — /import (вход через cookies)."
         )
+
+
+# ──────── Подключение Telegram-каналов (Telethon user-session) ────────
+
+@router.message(Command("tg_login"))
+@router.message(F.text == BTN_TG)
+@only_owner
+async def cmd_tg_login(msg: Message, state: FSMContext) -> None:
+    if not tg_client.has_credentials():
+        await msg.answer(
+            "⚠️ Не заданы <code>TELEGRAM_API_ID</code> и <code>TELEGRAM_API_HASH</code>.\n\n"
+            "Получи их на <a href='https://my.telegram.org'>my.telegram.org</a> "
+            "→ API development tools, добавь в <code>.env</code> и перезапусти бота.",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        return
+
+    if tg_client.has_session():
+        await msg.answer(
+            "📡 Telegram уже подключён (сессия найдена).\n"
+            "Если хочешь переподключить другой аккаунт — продолжай ввод номера, "
+            "иначе нажми любую другую кнопку."
+        )
+
+    await _close_pending_tg_login(config.ALLOWED_USER_ID)
+    await state.set_state(TgLoginFlow.waiting_for_phone)
+    await msg.answer(
+        "📡 <b>Подключение Telegram-каналов</b>\n\n"
+        "Вход выполняется через твой личный аккаунт (Telethon), чтобы читать "
+        "каналы из папки.\n\n"
+        "Введи номер телефона в формате <code>+79001234567</code>:",
+        parse_mode="HTML",
+    )
+
+
+@router.message(TgLoginFlow.waiting_for_phone)
+@only_owner
+async def tg_login_phone(msg: Message, state: FSMContext) -> None:
+    phone = (msg.text or "").strip()
+    if not phone.startswith("+") or len(_digits_only(phone)) < 10:
+        await msg.answer("⚠️ Введи номер в формате <code>+79001234567</code>.", parse_mode="HTML")
+        return
+
+    await _close_pending_tg_login(config.ALLOWED_USER_ID)
+    status_msg = await msg.answer("⏳ Подключаюсь к Telegram и отправляю код…")
+
+    lock_held = False
+    try:
+        await tg_client.TG_USER_LOCK.acquire()
+        lock_held = True
+        client = await tg_client.begin_login()
+        phone_code_hash = await tg_client.send_login_code(client, phone)
+    except Exception as e:
+        if lock_held:
+            try:
+                await tg_client.TG_USER_LOCK.release()
+            except Exception:
+                pass
+        await status_msg.delete()
+        await state.clear()
+        await msg.answer(f"❌ Не удалось отправить код: {e}\nПопробуй /tg_login ещё раз.")
+        return
+
+    _pending_tg_logins[config.ALLOWED_USER_ID] = PendingTgLogin(
+        client=client,
+        phone=phone,
+        phone_code_hash=phone_code_hash,
+        created_at=time.time(),
+        lock_held=lock_held,
+    )
+    await status_msg.delete()
+    await state.set_state(TgLoginFlow.waiting_for_code)
+    await msg.answer(
+        "📩 Код отправлен в Telegram (в «Telegram» / другое устройство).\n\n"
+        "⚠️ <b>Важно:</b> Telegram аннулирует код, если прислать его обычным текстом.\n"
+        "Поэтому введи код <b>с пробелами или дефисами между цифрами</b>, например:\n"
+        "<code>1 2 3 4 5</code> или <code>1-2-3-4-5</code>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(TgLoginFlow.waiting_for_code)
+@only_owner
+async def tg_login_code(msg: Message, state: FSMContext) -> None:
+    session = _pending_tg_logins.get(config.ALLOWED_USER_ID)
+    if not session:
+        await state.clear()
+        await msg.answer("⚠️ Сессия входа истекла. Запусти /tg_login заново.")
+        return
+
+    if time.time() - session.created_at > LOGIN_SESSION_TTL_SEC:
+        await _close_pending_tg_login(config.ALLOWED_USER_ID)
+        await state.clear()
+        await msg.answer("⚠️ Время на ввод кода истекло. Запусти /tg_login заново.")
+        return
+
+    code = _digits_only(msg.text or "")
+    if not code:
+        await msg.answer("⚠️ Введи код цифрами с разделителями, напр. <code>1 2 3 4 5</code>.", parse_mode="HTML")
+        return
+
+    status_msg = await msg.answer("⏳ Проверяю код…")
+    try:
+        ok = await tg_client.complete_login_code(
+            session.client, session.phone, code, session.phone_code_hash
+        )
+    except tg_client.SessionPasswordNeededError:
+        await status_msg.delete()
+        await state.set_state(TgLoginFlow.waiting_for_password)
+        await msg.answer(
+            "🔐 У аккаунта включена двухфакторная защита.\n"
+            "Введи облачный пароль (2FA):"
+        )
+        return
+    except Exception as e:
+        await _close_pending_tg_login(config.ALLOWED_USER_ID)
+        await status_msg.delete()
+        await state.clear()
+        await msg.answer(f"❌ Неверный код или ошибка входа: {e}\nЗапусти /tg_login заново.")
+        return
+
+    await status_msg.delete()
+    await _finish_tg_login(msg, state, ok)
+
+
+@router.message(TgLoginFlow.waiting_for_password)
+@only_owner
+async def tg_login_password(msg: Message, state: FSMContext) -> None:
+    session = _pending_tg_logins.get(config.ALLOWED_USER_ID)
+    if not session:
+        await state.clear()
+        await msg.answer("⚠️ Сессия входа истекла. Запусти /tg_login заново.")
+        return
+
+    password = (msg.text or "").strip()
+    status_msg = await msg.answer("⏳ Проверяю пароль…")
+    try:
+        ok = await tg_client.complete_login_password(session.client, password)
+    except Exception as e:
+        await _close_pending_tg_login(config.ALLOWED_USER_ID)
+        await status_msg.delete()
+        await state.clear()
+        await msg.answer(f"❌ Неверный пароль 2FA: {e}\nЗапусти /tg_login заново.")
+        return
+
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    await status_msg.delete()
+    await _finish_tg_login(msg, state, ok)
+
+
+async def _finish_tg_login(msg: Message, state: FSMContext, ok: bool) -> None:
+    await _close_pending_tg_login(config.ALLOWED_USER_ID)
+    await state.clear()
+    if ok:
+        await msg.answer(
+            "✅ Telegram подключён! Сессия сохранена.\n\n"
+            "Теперь включи источник в веб-настройках: <b>Настройки → Telegram-каналы</b> "
+            "(тумблер + имя папки). Кнопка «Показать папки» поможет найти название.",
+            parse_mode="HTML",
+        )
+    else:
+        await msg.answer("❌ Вход не подтверждён. Запусти /tg_login заново.")
 
 
 # ──────── Импорт сессии через cookies (обход робот-проверки) ────────
@@ -646,6 +856,25 @@ async def cb_apply(cq: CallbackQuery) -> None:
 async def cb_apply_force(cq: CallbackQuery) -> None:
     vacancy_id = cq.data.split(":", 1)[1]
     await _start_apply_flow(cq, vacancy_id)
+
+
+@router.callback_query(F.data.startswith("tg_letter:"))
+@only_owner
+async def cb_tg_letter(cq: CallbackQuery) -> None:
+    vacancy_id = cq.data.split(":", 1)[1]
+    await cq.answer("Генерирую черновик письма...")
+    result = await apply_service.generate_cover_letter(vacancy_id)
+    if not result:
+        await cq.message.reply("❌ Вакансия не найдена в базе.")
+        return
+    vacancy, cover = result
+    preview = cover[:3500]
+    await cq.message.reply(
+        "📝 <b>Черновик письма</b> (скопируйте и отправьте работодателю вручную):\n\n"
+        f"{esc(preview)}",
+        parse_mode="HTML",
+        reply_markup=build_tg_letter_keyboard(vacancy_id, vacancy.get("url", "")),
+    )
 
 
 @router.callback_query(F.data.startswith("letter_send:"))

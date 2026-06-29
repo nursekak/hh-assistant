@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
+from vacancy_types import VacancyData
+
 from playwright.async_api import (
     async_playwright,
     Browser,
@@ -111,17 +113,6 @@ async def save_session(context: BrowserContext) -> None:
         except OSError:
             pass
         raise
-
-
-@dataclass
-class VacancyData:
-    id: str
-    title: str
-    company: str
-    salary: str
-    url: str
-    full_text: str = field(default="")
-    experience: str = field(default="")
 
 
 @dataclass

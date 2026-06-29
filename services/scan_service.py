@@ -17,6 +17,7 @@ import sanitizer
 import scan_debug
 import scan_phases
 import scraper
+import tg_client
 from extractor import ResumeProfile, VacancyProfile
 from repositories import ResumeRepository, ScanJobRepository, SettingsRepository, VacancyRepository
 from services.telegram_ui import build_vacancy_keyboard, format_vacancy_message
@@ -90,11 +91,15 @@ class ScanService:
             job_id, scan_phases.SEARCHING, scan_phases.label(scan_phases.SEARCHING)
         )
 
-        if not Path(config.SESSION_FILE).exists():
+        hh_available = Path(config.SESSION_FILE).exists()
+        tg_available = await self._tg_scan_available()
+
+        if not hh_available and not tg_available:
             await self._fail_preflight(
                 job_id,
-                "Нет сессии HH.ru",
-                "⚠️ Нет сессии HH.ru. Запусти /login сначала.",
+                "Нет доступных источников",
+                "⚠️ Нет ни сессии HH.ru (/login), ни Telegram-каналов "
+                "(включите TG в настройках и выполните tg_login.py).",
             )
             return
 
@@ -110,39 +115,103 @@ class ScanService:
             )
             return
 
-        recorder = scan_debug.ScanDebugRecorder(job_id, query)
-        try:
-            await self.scan_job_repo.log(job_id, "Открываю HH.ru и собираю вакансии…")
-            vacancies = await scraper.search_vacancies(
-                query, limit=config.MAX_VACANCIES, debug=recorder
-            )
-            await self.scan_job_repo.log(job_id, f"Найдено вакансий: {len(vacancies)}")
-            if recorder.enabled and recorder.pages:
-                tot = recorder.summary()
-                await self.scan_job_repo.log(
-                    job_id,
-                    f"🖼 Визуальный отчёт парсинга: {tot['cards_total']} карточек "
-                    f"на {tot['pages']} стр. (новых {tot['new_total']}, "
-                    f"в базе {tot['seen_total']}) — раздел «Парсинг»",
-                )
-        except RuntimeError as e:
-            await self.scan_job_repo.update(job_id, error=str(e))
-            await self.scan_job_repo.finish(job_id, scan_phases.ERROR, "Ошибка парсера")
-            if self.notifier:
-                if "SESSION_EXPIRED" in str(e):
+        collectors: list[Awaitable[list[scraper.VacancyData]]] = []
+        labels: list[str] = []
+        if hh_available:
+            labels.append("HH")
+            collectors.append(self._collect_hh(job_id, query))
+        if tg_available:
+            labels.append("TG")
+            collectors.append(self._collect_tg(job_id))
+
+        results = await asyncio.gather(*collectors, return_exceptions=True)
+        vacancies: list[scraper.VacancyData] = []
+        sources_ok = 0
+        for label, result in zip(labels, results):
+            if isinstance(result, Exception):
+                log.exception("Ошибка источника %s", label, exc_info=result)
+                await self.scan_job_repo.log(job_id, f"❌ [{label}] {result}")
+                if label == "HH" and self.notifier and "SESSION_EXPIRED" in str(result):
                     await self.notifier.notify("🔑 Сессия HH.ru истекла. Запусти /login заново.")
-                else:
-                    await self.notifier.notify(f"❌ Ошибка парсера: {e}")
-            return
-        except Exception as e:
-            log.exception("Ошибка парсера")
-            await self.scan_job_repo.update(job_id, error=str(e))
+            else:
+                sources_ok += 1
+                vacancies.extend(result)
+                await self.scan_job_repo.log(
+                    job_id, f"[{label}] Собрано вакансий: {len(result)}"
+                )
+
+        if sources_ok == 0:
+            await self.scan_job_repo.update(job_id, error="Все источники недоступны")
             await self.scan_job_repo.finish(job_id, scan_phases.ERROR, "Ошибка парсера")
             if self.notifier:
-                await self.notifier.notify(f"❌ Ошибка парсера: {e}")
+                await self.notifier.notify("❌ Не удалось собрать вакансии ни из одного источника.")
             return
 
         await self._process_vacancies(job_id, vacancies, query, model)
+
+    async def _collect_hh(self, job_id: int, query: str) -> list[scraper.VacancyData]:
+        recorder = scan_debug.ScanDebugRecorder(job_id, query)
+        await self.scan_job_repo.log(job_id, "[HH] Открываю HH.ru и собираю вакансии…")
+        vacancies = await scraper.search_vacancies(
+            query, limit=config.MAX_VACANCIES, debug=recorder
+        )
+        if recorder.enabled and recorder.pages:
+            tot = recorder.summary()
+            await self.scan_job_repo.log(
+                job_id,
+                f"[HH] 🖼 Визуальный отчёт: {tot['cards_total']} карточек "
+                f"на {tot['pages']} стр. (новых {tot['new_total']}, "
+                f"в базе {tot['seen_total']}) — раздел «Парсинг»",
+            )
+        return vacancies
+
+    async def _collect_tg(self, job_id: int) -> list[scraper.VacancyData]:
+        folder = await self.settings_repo.get(
+            "tg_channels_folder", config.TG_CHANNELS_FOLDER
+        )
+        lookback = await self._get_int_setting(
+            "tg_lookback_hours", config.TG_LOOKBACK_HOURS
+        )
+        max_per = await self._get_int_setting(
+            "tg_max_messages_per_channel", config.TG_MAX_MESSAGES_PER_CHANNEL
+        )
+        await self.scan_job_repo.log(
+            job_id,
+            f"[TG] Читаю каналы из папки «{folder}» (lookback={lookback}ч)…",
+        )
+        return await tg_client.fetch_new_messages(
+            folder_name=folder,
+            lookback_hours=lookback,
+            max_per_channel=max_per,
+            is_seen=self.vacancy_repo.is_seen,
+        )
+
+    async def _tg_scan_available(self) -> bool:
+        enabled = await self._get_bool_setting("tg_scan_enabled", config.TG_SCAN_ENABLED)
+        if not enabled:
+            return False
+        if not tg_client.is_configured():
+            return False
+        folder = await self.settings_repo.get(
+            "tg_channels_folder", config.TG_CHANNELS_FOLDER
+        )
+        return bool(folder.strip())
+
+    @staticmethod
+    def _source_tag(vacancy: scraper.VacancyData) -> str:
+        return "[TG]" if vacancy.source == "tg" else "[HH]"
+
+    async def _get_bool_setting(self, key: str, default: bool) -> bool:
+        raw = await self.settings_repo.get(key, "")
+        if not raw:
+            return default
+        return raw.lower() in ("1", "true", "yes", "on")
+
+    async def _get_int_setting(self, key: str, default: int) -> int:
+        try:
+            return int(await self.settings_repo.get(key, str(default)))
+        except (TypeError, ValueError):
+            return default
 
     async def _fail_preflight(
         self,
@@ -193,6 +262,7 @@ class ScanService:
 
         for vacancy in vacancies:
             processed += 1
+            tag = self._source_tag(vacancy)
             await self.scan_job_repo.update(
                 job_id,
                 processed=processed,
@@ -201,7 +271,7 @@ class ScanService:
             )
 
             if await self.vacancy_repo.is_seen(vacancy.id):
-                await self.scan_job_repo.log(job_id, f"↺ Уже видели: {vacancy.title}")
+                await self.scan_job_repo.log(job_id, f"{tag} ↺ Уже видели: {vacancy.title}")
                 continue
 
             if exp_filter_on and resume_years is not None:
@@ -216,7 +286,7 @@ class ScanService:
                     )
                     await self.scan_job_repo.log(
                         job_id,
-                        f"⏭ Опыт {vacancy.experience or req_years} > резюме "
+                        f"{tag} ⏭ Опыт {vacancy.experience or req_years} > резюме "
                         f"(~{resume_years}л) — пропуск: {vacancy.title}",
                     )
                     continue
@@ -226,7 +296,7 @@ class ScanService:
             if active_resume:
                 san = sanitizer.sanitize(vacancy.full_text or vacancy.title)
                 vac_text = san.text if san.text else vacancy.title
-                await self.scan_job_repo.log(job_id, f"🔍 Парсинг требований: {vacancy.title}")
+                await self.scan_job_repo.log(job_id, f"{tag} 🔍 Парсинг требований: {vacancy.title}")
                 vac_profile = await extractor.extract_vacancy_requirements(
                     vacancy.title, vacancy.company, vac_text, model=model,
                 )
@@ -247,7 +317,7 @@ class ScanService:
                     if not notify_below:
                         await self.scan_job_repo.log(
                             job_id,
-                            f"🚫 {match_result.score_pct}% — ниже порога, без Telegram: {vacancy.title}",
+                            f"{tag} 🚫 {match_result.score_pct}% — ниже порога, без Telegram: {vacancy.title}",
                         )
                         await self._save_and_notify(
                             vacancy, match_result, query, vac_profile, model, resume_id,
@@ -257,7 +327,7 @@ class ScanService:
 
                     await self.scan_job_repo.log(
                         job_id,
-                        f"⚠️ {match_result.score_pct}% — ниже порога: {vacancy.title}",
+                        f"{tag} ⚠️ {match_result.score_pct}% — ниже порога: {vacancy.title}",
                     )
 
             new_count += 1
@@ -265,7 +335,7 @@ class ScanService:
             pct = f"{match_result.score_pct}% — " if match_result else ""
             await self.scan_job_repo.log(
                 job_id,
-                f"✅ {pct}отправляю: {vacancy.title} ({vacancy.company})",
+                f"{tag} ✅ {pct}отправляю: {vacancy.title} ({vacancy.company})",
             )
 
             resume_id = active_resume["id"] if active_resume else ""
@@ -365,6 +435,7 @@ class ScanService:
             profile_json=vac_profile.to_json() if vac_profile else "",
             scan_query=scan_query,
             resume_id=resume_id,
+            source=vacancy.source,
         )
 
         if not notify or not self.notifier:
