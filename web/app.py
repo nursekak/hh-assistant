@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from web.routers import analytics, resumes, settings
+from web.routers import analytics, resumes, scan_debug, settings
 from repositories import ScanJobRepository
 from services import DashboardService
 
@@ -22,6 +22,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(resumes.router)
     app.include_router(analytics.router)
+    app.include_router(scan_debug.router)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):

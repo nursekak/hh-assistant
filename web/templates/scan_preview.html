@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Парсинг — HH Ассистент{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <div class="page-title">Парсинг вакансий</div>
+    <div class="page-sub">Скриншоты страниц поиска и что увидел парсер — глазами видно, почему нашлось столько новых</div>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    {% if scan_running %}
+    <span class="badge badge-green" style="gap:6px;">
+      <span class="dot dot-green dot-pulse"></span> Идёт скан — обновляется вживую
+    </span>
+    {% endif %}
+    <a href="/scan-preview" class="btn btn-secondary btn-sm">Обновить</a>
+    <button type="button" class="btn btn-primary btn-sm" onclick="runScan(this)"
+            {% if scan_running %}disabled{% endif %}>Запустить скан</button>
+  </div>
+</div>
+
+{% if not run %}
+  <div class="card">
+    {% if scan_running %}
+    <div class="alert alert-info" style="margin-bottom:0;">
+      <span class="dot dot-green dot-pulse" style="margin-top:5px;"></span>
+      Скан запущен — открываю HH.ru. Первая страница выдачи появится через несколько секунд…
+    </div>
+    {% else %}
+    <div class="alert alert-info" style="margin-bottom:0;">
+      Пока нет визуальных отчётов. Запусти скан — после прохода появятся скриншоты страниц
+      поиска и список найденных карточек (новые / уже в базе).
+    </div>
+    {% endif %}
+  </div>
+{% else %}
+
+  <!-- ── Выбор прогона ── -->
+  {% if runs|length > 1 %}
+  <div class="card" style="margin-bottom:18px;">
+    <div class="field" style="margin-bottom:0;">
+      <label>Прогон скана</label>
+      <select class="input" onchange="if(this.value) location.href='/scan-preview?job_id='+this.value;">
+        {% for r in runs %}
+        <option value="{{ r.job_id }}" {% if r.job_id == run.job_id %}selected{% endif %}>
+          #{{ r.job_id }} · {{ r.created_at }} · «{{ r.query }}» —
+          новых {{ r.totals.new_total | default(0) }} из {{ r.totals.cards_total | default(0) }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── Сводка ── -->
+  <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-bottom:18px;">
+    <div class="stat-card">
+      <div class="stat-label">Запрос</div>
+      <div class="stat-value" style="font-size:15px;">{{ run.query }}</div>
+      <div class="stat-sub">скан #{{ run.job_id }} · {{ run.created_at }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Страниц пролистано</div>
+      <div class="stat-value">{{ run.totals.pages | default(run.pages|length) }}</div>
+      <div class="stat-sub">за {{ run.duration_sec | default(0) }} c</div>
+    </div>
+    {% set hh_found = (run.pages[0].found_total if run.pages else none) %}
+    <div class="stat-card">
+      <div class="stat-label">Карточек спарсено</div>
+      <div class="stat-value">{{ run.totals.cards_total | default(0) }}</div>
+      <div class="stat-sub">{% if hh_found is not none %}HH заявил: {{ hh_found }}{% else %}найдено в выдаче{% endif %}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Из них новых</div>
+      <div class="stat-value" style="color:#16a34a;">{{ run.totals.new_total | default(0) }}</div>
+      <div class="stat-sub">в базе уже {{ run.totals.seen_total | default(0) }}</div>
+    </div>
+  </div>
+
+  {% if run.search_url %}
+  <div class="card" style="margin-bottom:18px;">
+    <div class="card-title">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      URL поиска на HH
+    </div>
+    <a href="{{ run.search_url }}" target="_blank" rel="noopener"
+       style="font-size:12.5px; color:#6366f1; word-break:break-all; line-height:1.6;">{{ run.search_url }}</a>
+  </div>
+  {% endif %}
+
+  {% if not live and run.pages and run.totals.new_total | default(0) == 0 %}
+  <div class="alert alert-warn">
+    За этот проход новых вакансий нет: все карточки в выдаче уже есть в базе (либо HH мало
+    отдал за выбранный период). Это нормально при коротком периоде поиска — увеличь период
+    в «Настройках», чтобы захватывать больше вакансий.
+  </div>
+  {% endif %}
+
+  <!-- ── Страницы ── -->
+  {% for pg in run.pages %}
+  <div class="card" style="margin-bottom:18px;" x-data="{ open: {{ 'true' if loop.first else 'false' }} }">
+    <div class="card-title" style="margin-bottom:0; cursor:pointer; justify-content:space-between;" @click="open = !open">
+      <span style="display:flex; align-items:center; gap:7px;">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+        Страница {{ pg.page_num }}
+      </span>
+      <span style="display:flex; align-items:center; gap:6px;">
+        {% if pg.found_total is not none %}<span class="badge badge-blue">HH: {{ pg.found_total }}</span>{% endif %}
+        <span class="badge badge-gray">спарсено {{ pg.total }}</span>
+        <span class="badge badge-green">новых {{ pg.new }}</span>
+        <span class="badge badge-orange">в базе {{ pg.seen }}</span>
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" :style="open ? 'transform:rotate(180deg)' : ''"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+    </div>
+
+    <div x-show="open" x-cloak style="margin-top:16px;">
+      <div style="display:grid; grid-template-columns:minmax(280px, 1fr) 1.4fr; gap:18px; align-items:start;">
+        <!-- Скриншот -->
+        <div>
+          {% if pg.screenshot %}
+          <a href="/api/scan/debug/{{ run.job_id }}/shot/{{ pg.screenshot }}?t={{ cache_bust }}" target="_blank" rel="noopener">
+            <img src="/api/scan/debug/{{ run.job_id }}/shot/{{ pg.screenshot }}?t={{ cache_bust }}"
+                 alt="Скриншот страницы {{ pg.page_num }}"
+                 style="width:100%; border-radius:10px; border:1px solid #e8edf3; box-shadow:0 2px 10px rgba(0,0,0,0.06); max-height:520px; object-fit:cover; object-position:top;">
+          </a>
+          <div class="field-hint" style="text-align:center;">Клик — открыть полный скриншот</div>
+          {% else %}
+          <div class="alert alert-error" style="margin:0;">Скриншот не сохранён</div>
+          {% endif %}
+        </div>
+
+        <!-- Список карточек -->
+        <div style="max-height:520px; overflow-y:auto;">
+          <table class="tbl">
+            <thead>
+              <tr><th>Вакансия</th><th>Компания</th><th style="text-align:right;">Статус</th></tr>
+            </thead>
+            <tbody>
+              {% for c in pg.cards %}
+              <tr>
+                <td>
+                  <a href="{{ c.url }}" target="_blank" rel="noopener" style="color:#1e293b; font-weight:500;">{{ c.title }}</a>
+                  {% if c.salary %}<div style="font-size:11.5px; color:#16a34a; margin-top:2px;">{{ c.salary }}</div>{% endif %}
+                </td>
+                <td style="color:#64748b;">{{ c.company }}</td>
+                <td style="text-align:right;">
+                  {% if c.seen %}<span class="badge badge-orange">в базе</span>
+                  {% else %}<span class="badge badge-green">новая</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+              {% if not pg.cards %}
+              <tr><td colspan="3" style="color:#94a3b8; text-align:center;">На этой странице карточек не найдено</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+{% endif %}
+
+<script>
+  // Сохраняем позицию прокрутки между авто-обновлениями, чтобы не «дёргалось».
+  (function () {
+    const KEY = 'spvScroll';
+    const saved = sessionStorage.getItem(KEY);
+    if (saved !== null) {
+      window.scrollTo(0, parseInt(saved, 10));
+      sessionStorage.removeItem(KEY);
+    }
+  })();
+
+  async function runScan(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Запускаю…';
+    try {
+      const res = await fetch('/api/scan/run', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        btn.textContent = 'Скан запущен — смотрим вживую…';
+        setTimeout(() => location.reload(), 2000);
+      } else {
+        btn.textContent = data.reason === 'already_running' ? 'Скан уже идёт' : 'Не удалось';
+        setTimeout(() => location.reload(), 1500);
+      }
+    } catch (e) {
+      btn.textContent = 'Ошибка запуска';
+      btn.disabled = false;
+    }
+  }
+
+  {% if live %}
+  // Живой режим: пока скан идёт — периодически обновляем страницу.
+  setTimeout(function () {
+    sessionStorage.setItem('spvScroll', String(window.scrollY));
+    location.reload();
+  }, 3000);
+  {% endif %}
+</script>
+
+{% endblock %}

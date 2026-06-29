@@ -17,6 +17,12 @@ SCAN_MAX_PAGES        = int(os.getenv("SCAN_MAX_PAGES", "20"))
 DEFAULT_QUERY         = os.getenv("DEFAULT_SEARCH_QUERY", "Python разработчик")
 SESSION_FILE          = os.getenv("SESSION_FILE", "hh_session.json")
 
+# Визуальная отладка парсинга: скриншоты страниц поиска + дамп карточек,
+# чтобы «глазами» видеть, что видит парсер (раздел «Парсинг» в дашборде).
+SCAN_DEBUG_ENABLED    = os.getenv("SCAN_DEBUG_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+SCAN_DEBUG_DIR        = os.getenv("SCAN_DEBUG_DIR", "data/scan_debug")
+SCAN_DEBUG_KEEP       = int(os.getenv("SCAN_DEBUG_KEEP", "10"))
+
 # Очередь задач: если REDIS_URL пуст — задачи выполняются inline (без воркера).
 REDIS_URL             = os.getenv("REDIS_URL", "")
 SCAN_JOB_TIMEOUT_SEC  = int(os.getenv("SCAN_JOB_TIMEOUT_SEC", "1800"))

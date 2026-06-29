@@ -14,6 +14,7 @@ import extractor
 import llm
 import matcher
 import sanitizer
+import scan_debug
 import scan_phases
 import scraper
 from extractor import ResumeProfile, VacancyProfile
@@ -109,10 +110,21 @@ class ScanService:
             )
             return
 
+        recorder = scan_debug.ScanDebugRecorder(job_id, query)
         try:
             await self.scan_job_repo.log(job_id, "Открываю HH.ru и собираю вакансии…")
-            vacancies = await scraper.search_vacancies(query, limit=config.MAX_VACANCIES)
+            vacancies = await scraper.search_vacancies(
+                query, limit=config.MAX_VACANCIES, debug=recorder
+            )
             await self.scan_job_repo.log(job_id, f"Найдено вакансий: {len(vacancies)}")
+            if recorder.enabled and recorder.pages:
+                tot = recorder.summary()
+                await self.scan_job_repo.log(
+                    job_id,
+                    f"🖼 Визуальный отчёт парсинга: {tot['cards_total']} карточек "
+                    f"на {tot['pages']} стр. (новых {tot['new_total']}, "
+                    f"в базе {tot['seen_total']}) — раздел «Парсинг»",
+                )
         except RuntimeError as e:
             await self.scan_job_repo.update(job_id, error=str(e))
             await self.scan_job_repo.finish(job_id, scan_phases.ERROR, "Ошибка парсера")
