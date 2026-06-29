@@ -31,6 +31,7 @@ from config import SESSION_FILE, MAX_VACANCIES
 import experience
 import hh_filters
 import pagination
+import scan_debug
 import storage
 
 log = logging.getLogger(__name__)
@@ -146,23 +147,77 @@ async def _random_delay(min_ms: int = 1500, max_ms: int = 3500) -> None:
     await asyncio.sleep(random.uniform(min_ms / 1000, max_ms / 1000))
 
 
-async def _scroll_to_load_all(page: Page, max_scrolls: int = 8) -> None:
-    """Скроллим вниз, пока не перестанут подгружаться карточки."""
-    prev_count = 0
+_CARD_SELECTOR = '[data-qa="vacancy-serp__vacancy"]'
+
+
+async def _scroll_to_load_all(page: Page, max_steps: int = 60) -> int:
+    """Плавно прокручивает всю страницу выдачи, подгружая ВСЕ карточки.
+
+    HH рендерит карточки лениво: при резком прыжке в самый низ часть не
+    успевает попасть в DOM. Поэтому идём шагами ~по высоте окна (с перекрытием),
+    ждём подгрузку и останавливаемся, только когда мы у самого низа И число
+    карточек, И высота страницы стабильны несколько раундов подряд.
+
+    Возвращает финальное число карточек в DOM.
+    """
     stable_rounds = 0
+    prev_count = -1
+    prev_height = -1
+    cur_count = await page.locator(_CARD_SELECTOR).count()
 
-    for _ in range(max_scrolls):
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await asyncio.sleep(1.2)
-        cur_count = await page.locator('[data-qa="vacancy-serp__vacancy"]').count()
+    for _ in range(max_steps):
+        await page.evaluate("window.scrollBy(0, Math.round(window.innerHeight * 0.85))")
+        await asyncio.sleep(0.7)
 
-        if cur_count == prev_count:
+        cur_count = await page.locator(_CARD_SELECTOR).count()
+        cur_height = await page.evaluate("document.body.scrollHeight")
+        at_bottom = await page.evaluate(
+            "(window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 8)"
+        )
+
+        if at_bottom and cur_count == prev_count and cur_height == prev_height:
             stable_rounds += 1
-            if stable_rounds >= 2:
+            if stable_rounds >= 3:
                 break
         else:
             stable_rounds = 0
-            prev_count = cur_count
+        prev_count = cur_count
+        prev_height = cur_height
+
+    # Возврат наверх — карточки уже в DOM, парсер берёт их из локаторов.
+    await page.evaluate("window.scrollTo(0, 0)")
+    await asyncio.sleep(0.3)
+    return cur_count
+
+
+async def _read_found_count(page: Page) -> int | None:
+    """Сколько вакансий HH заявил найденными («Найдено N вакансий»).
+
+    Диагностика: сравнив с числом спарсенных карточек, видно, всё ли догрузилось.
+    Возвращает None, если число не удалось определить.
+    """
+    try:
+        text = await page.evaluate(
+            """() => {
+                const sels = ['[data-qa="title"]', '[data-qa="bloko-header-3"]', 'h1', 'h2'];
+                for (const s of sels) {
+                    for (const el of document.querySelectorAll(s)) {
+                        const t = (el.textContent || '');
+                        if (/вакан/i.test(t) && /\\d/.test(t)) return t;
+                    }
+                }
+                return '';
+            }"""
+        )
+    except Exception:
+        return None
+    if not text:
+        return None
+    digits = re.sub(r"[^\d]", "", text.replace("\u00a0", ""))
+    try:
+        return int(digits) if digits else None
+    except ValueError:
+        return None
 
 
 async def _get_full_text(page: Page, url: str) -> tuple[str, str]:
@@ -483,10 +538,17 @@ async def login_step2_enter_otp(page: Page, code: str) -> bool:
     return await _wait_login_complete(page)
 
 
-async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[VacancyData]:
+async def search_vacancies(
+    query: str,
+    limit: int = MAX_VACANCIES,
+    debug: "scan_debug.ScanDebugRecorder | None" = None,
+) -> list[VacancyData]:
     """
     Главная функция: ищет вакансии по запросу и возвращает список с полным текстом.
     Использует сохранённую сессию из SESSION_FILE если есть.
+
+    Если передан ``debug`` — на каждой странице поиска делается скриншот и
+    запись найденных карточек (новые/виденные) для визуального просмотра.
     """
     import config as cfg
 
@@ -531,6 +593,8 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
             per_page=50,
         )
         log.info("URL поиска: %s", search_url)
+        if debug:
+            debug.set_search_url(search_url)
 
         # Парсинг карточек одной страницы поиска (без полного текста вакансии).
         async def fetch_page_cards(page_num: int) -> list[VacancyData]:
@@ -542,9 +606,14 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
             if "account/login" in page.url:
                 raise RuntimeError("SESSION_EXPIRED")
 
-            await _scroll_to_load_all(page)
+            dom_count = await _scroll_to_load_all(page)
+            found_total = await _read_found_count(page)
+            log.info(
+                "Стр %d: HH заявил %s, карточек в DOM после прокрутки %d",
+                page_num, found_total if found_total is not None else "?", dom_count,
+            )
 
-            cards = page.locator('[data-qa="vacancy-serp__vacancy"]')
+            cards = page.locator(_CARD_SELECTOR)
             total = await cards.count()
             page_cards: list[VacancyData] = []
 
@@ -584,6 +653,23 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
                     VacancyData(id=vacancy_id, title=title, company=company, salary=salary, url=url)
                 )
 
+            # Визуальная отладка: скриншот выдачи + что нашли (новые/виденные).
+            if debug:
+                try:
+                    card_dump = []
+                    for c in page_cards:
+                        card_dump.append({
+                            "id": c.id,
+                            "title": c.title,
+                            "company": c.company,
+                            "salary": c.salary,
+                            "url": c.url,
+                            "seen": await storage.is_seen(c.id),
+                        })
+                    await debug.capture_page(page, page_num, card_dump, found_total=found_total)
+                except Exception:
+                    log.exception("scan_debug: ошибка захвата страницы %s", page_num)
+
             return page_cards
 
         # Листаем страницы, пока не наберём `limit` уникальных НОВЫХ вакансий.
@@ -604,6 +690,13 @@ async def search_vacancies(query: str, limit: int = MAX_VACANCIES) -> list[Vacan
             "Поиск «%s»: новых вакансий %d за %d стр. (лимит %d)",
             query, len(results), pages_visited, limit,
         )
+
+        if debug:
+            await debug.finalize({
+                "pages": pages_visited,
+                "new_total": len(results),
+                "limit": limit,
+            })
 
         # --- Забираем полный текст и требуемый опыт для каждой вакансии ---
         for v in results:
